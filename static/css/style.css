@@ -1,13 +1,50 @@
-/* style.css - Custom UI Enhancements */
+/* style.css - Clean, Minimal & Humanized UI Design */
+
+:root {
+    --primary-color: #2563eb;
+    --primary-hover: #1d4ed8;
+    --primary-light: #eff6ff;
+    --primary-border: #bfdbfe;
+    
+    --slate-50: #f8fafc;
+    --slate-100: #f1f5f9;
+    --slate-200: #e2e8f0;
+    --slate-300: #cbd5e1;
+    --slate-600: #475569;
+    --slate-700: #334155;
+    --slate-800: #1e293b;
+    --slate-900: #0f172a;
+
+    --success-bg: #ecfdf5;
+    --success-text: #065f46;
+    --success-border: #a7f3d0;
+
+    --danger-bg: #fef2f2;
+    --danger-text: #991b1b;
+    --danger-border: #fecaca;
+
+    --warning-bg: #fefce8;
+    --warning-text: #854d0e;
+    --warning-border: #fef08a;
+}
 
 body {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #1e293b;
+    color: var(--slate-800);
     background-color: #f8fafc;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
-.bg-dark-navy {
-    background-color: #0f172a;
+/* ==========================================
+   1. NAVBAR SYSTEM
+   ========================================== */
+.main-navbar {
+    background-color: rgba(255, 255, 255, 0.96) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--slate-200);
+    transition: all 0.2s ease;
 }
 
 .brand-icon {
@@ -16,18 +53,55 @@ body {
     justify-content: center;
     width: 38px;
     height: 38px;
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    color: #fff;
+    background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+    color: #ffffff;
     border-radius: 10px;
-    font-size: 1.25rem;
+    font-size: 1.2rem;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
 }
 
+.navbar .nav-link {
+    color: var(--slate-600);
+    font-size: 0.90rem;
+    font-weight: 500;
+    padding: 0.45rem 1rem !important;
+    border-radius: 9999px;
+    transition: all 0.15s ease-in-out;
+}
+
+.navbar .nav-link:hover {
+    color: var(--primary-color);
+    background-color: var(--primary-light);
+}
+
+.navbar .nav-link.active {
+    color: var(--primary-color) !important;
+    font-weight: 600;
+    background-color: #eff6ff;
+}
+
+.navbar .nav-link.active.cumilla-nav-link {
+    color: #059669 !important;
+    background-color: #ecfdf5;
+}
+
+.navbar .nav-link.active.analysis-nav-link {
+    color: #ffffff !important;
+    background-color: var(--primary-color);
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.28);
+}
+
+/* Utilities */
 .tracking-tight {
-    letter-spacing: -0.02em;
+    letter-spacing: -0.025em;
+}
+
+.tracking-wider {
+    letter-spacing: 0.05em;
 }
 
 .fs-7 {
-    font-size: 0.75rem;
+    font-size: 0.78rem;
 }
 
 .fs-8 {
@@ -38,64 +112,366 @@ body {
     max-width: 700px;
 }
 
-/* Card Styling */
+/* ==========================================
+   2. CARDS & GENERAL LAYOUT
+   ========================================== */
 .card {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    border: 1px solid rgba(226, 232, 240, 0.8) !important;
+    background: #ffffff;
+    border: 1px solid var(--slate-200) !important;
+    border-radius: 14px;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
-/* Drop Zone */
-.border-dashed {
+.card:hover {
+    border-color: #cbd5e1 !important;
+}
+
+.card-header {
+    background-color: #ffffff;
+    border-bottom: 1px solid var(--slate-100);
+}
+
+/* Form Inputs & Selects */
+.form-select, .form-control {
+    border-color: var(--slate-300);
+    color: var(--slate-800);
+    font-size: 0.88rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: 9px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-select:focus, .form-control:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.input-group-text {
+    border-color: var(--slate-300);
+    color: var(--slate-600);
+    font-size: 0.88rem;
+    border-radius: 9px;
+}
+
+/* Mode Switcher Tabs */
+.mode-tabs-container {
+    background-color: var(--slate-100);
+    padding: 4px;
+    border-radius: 10px;
+    border: 1px solid var(--slate-200);
+}
+
+.mode-tabs-container .nav-link {
+    color: var(--slate-600);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.55rem 1rem;
+    transition: all 0.15s ease;
+    border: none;
+}
+
+.mode-tabs-container .nav-link.active {
+    background-color: #ffffff;
+    color: var(--primary-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* File Drop Zone */
+.drop-zone {
     border: 2px dashed #cbd5e1;
-    background-color: #f8fafc;
-    transition: all 0.2s ease-in-out;
+    background-color: #fafbfc;
+    border-radius: 12px;
+    transition: all 0.2s ease;
     cursor: pointer;
 }
 
-.border-dashed:hover, .border-dashed.dragover {
-    border-color: #3b82f6;
-    background-color: #eff6ff;
+.drop-zone:hover, .drop-zone.dragover {
+    border-color: var(--primary-color);
+    background-color: var(--primary-light);
 }
 
-/* Table */
+/* ==========================================
+   3. RESULT ANALYSIS - MINIMAL DESIGN
+   ========================================== */
+
+/* Metric Tiles */
+.metric-tile {
+    background-color: #ffffff;
+    border: 1px solid var(--slate-200);
+    border-radius: 12px;
+    padding: 1rem 0.85rem;
+    text-align: center;
+    height: 100%;
+    transition: all 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.metric-tile:hover {
+    border-color: var(--slate-300);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+}
+
+.metric-label {
+    font-size: 0.70rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--slate-600);
+    margin-bottom: 0.25rem;
+}
+
+.metric-value {
+    font-size: 1.65rem;
+    font-weight: 700;
+    line-height: 1.2;
+    margin: 0;
+}
+
+.metric-sub {
+    font-size: 0.72rem;
+    font-weight: 600;
+    margin-top: 0.35rem;
+}
+
+/* 4th Subject Mode Bar */
+.fourth-mode-bar {
+    background-color: #ffffff;
+    border: 1px solid var(--slate-200);
+    border-radius: 11px;
+    padding: 0.6rem 1rem;
+}
+
+/* Modern Friendly Tab Bar */
+#analysisTabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    border-bottom: 1px solid var(--slate-200);
+    padding: 0.35rem 0.35rem 0.65rem 0.35rem;
+    background-color: #ffffff;
+}
+
+#analysisTabs .nav-item {
+    flex-shrink: 0;
+}
+
+#analysisTabs .nav-link {
+    white-space: nowrap;
+    font-size: 0.81rem;
+    font-weight: 600;
+    padding: 0.45rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid var(--slate-200);
+    color: var(--slate-600);
+    background-color: #f8fafc;
+    transition: all 0.15s ease-in-out;
+    display: inline-flex;
+    align-items: center;
+}
+
+#analysisTabs .nav-link:hover {
+    color: var(--slate-900);
+    background-color: #f1f5f9;
+    border-color: #cbd5e1;
+    transform: translateY(-1px);
+}
+
+#analysisTabs .nav-link.active {
+    color: var(--primary-color) !important;
+    background-color: var(--primary-light) !important;
+    border-color: rgba(37, 99, 235, 0.3) !important;
+    font-weight: 700;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Clickable KPI Metric Tile */
+.metric-tile.clickable-tile {
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.metric-tile.clickable-tile:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
+    border-color: var(--primary-color);
+}
+
+/* Subject Failure Summary Cards */
+.subject-fail-card {
+    transition: all 0.18s ease-in-out;
+    border: 1px solid #e2e8f0;
+    background-color: #ffffff;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.subject-fail-card:hover {
+    border-color: #fca5a5;
+    background-color: #fffafb;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(239, 68, 68, 0.08);
+}
+
+.subject-fail-card.active-filter {
+    border-color: #ef4444 !important;
+    background-color: #fef2f2 !important;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25) !important;
+}
+
+/* 2-Subject Frequency & Pair Items */
+.two-sub-summary-item {
+    transition: all 0.15s ease;
+    border: 1px solid #e2e8f0;
+    background-color: #ffffff;
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+}
+
+.two-sub-summary-item:hover {
+    border-color: #f87171;
+    background-color: #fff5f5;
+    transform: translateX(2px);
+}
+
+.two-sub-summary-item.active-filter {
+    border-color: #dc2626 !important;
+    background-color: #fee2e2 !important;
+}
+
+/* Minimal Table Styling */
+.table {
+    border-color: var(--slate-200);
+}
+
 .table th {
-    font-size: 0.78rem;
+    font-size: 0.74rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #64748b;
-    font-weight: 600;
+    color: var(--slate-600);
+    font-weight: 700;
+    background-color: #f8fafc;
+    padding: 0.65rem 0.75rem;
+    border-bottom: 1px solid var(--slate-200);
 }
 
 .table td {
-    font-size: 0.88rem;
+    font-size: 0.85rem;
+    padding: 0.65rem 0.75rem;
+    vertical-align: middle;
 }
 
-/* Badges */
-.badge-gpa-gold {
-    background-color: #fef08a;
+.table-hover tbody tr:hover {
+    background-color: #f8fafc;
+}
+
+/* Minimal Grade Badges */
+.badge-gpa-gold, .badge-grade-gold {
+    background-color: #fefce8;
     color: #854d0e;
+    border: 1px solid #fef08a;
     font-weight: 700;
+    border-radius: 6px;
+    padding: 0.25rem 0.5rem;
 }
 
-.badge-gpa-green {
-    background-color: #dcfce7;
-    color: #166534;
+.badge-gpa-green, .badge-grade-green {
+    background-color: #ecfdf5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
     font-weight: 600;
+    border-radius: 6px;
+    padding: 0.25rem 0.5rem;
 }
 
-.badge-gpa-blue {
-    background-color: #e0f2fe;
-    color: #075985;
+.badge-gpa-blue, .badge-grade-blue {
+    background-color: #f0f9ff;
+    color: #0369a1;
+    border: 1px solid #bae6fd;
     font-weight: 600;
+    border-radius: 6px;
+    padding: 0.25rem 0.5rem;
 }
 
-.badge-gpa-red {
-    background-color: #fee2e2;
+.badge-gpa-red, .badge-grade-red {
+    background-color: #fef2f2;
     color: #991b1b;
+    border: 1px solid #fecaca;
     font-weight: 600;
+    border-radius: 6px;
+    padding: 0.25rem 0.5rem;
 }
 
-/* Spinner Animation */
+/* Merit Standings */
+.merit-rank-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+.merit-rank-1 {
+    background-color: #fef9c3;
+    color: #854d0e;
+    border: 1px solid #fef08a;
+}
+
+.merit-rank-2 {
+    background-color: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+}
+
+.merit-rank-3 {
+    background-color: #ffedd5;
+    color: #9a3412;
+    border: 1px solid #fed7aa;
+}
+
+.merit-rank-normal {
+    background-color: #f8fafc;
+    color: #475569;
+    border: 1px solid var(--slate-200);
+}
+
+/* Subject Filter Pills */
+.filter-pill {
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    font-size: 0.78rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 50rem;
+    border: 1px solid var(--slate-200);
+    background-color: #ffffff;
+    color: var(--slate-700);
+}
+
+.filter-pill:hover {
+    border-color: var(--slate-300);
+    background-color: var(--slate-50);
+}
+
+.filter-pill.active {
+    background-color: var(--slate-900) !important;
+    color: #ffffff !important;
+    border-color: var(--slate-900) !important;
+}
+
+/* Callout Card */
+#analysisCalloutCard {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid #cbd5e1 !important;
+}
+
+/* Animations */
 @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
@@ -106,55 +482,18 @@ body {
     animation: spin 1s linear infinite;
 }
 
-/* Pulse Animation for Completed Button */
 @keyframes pulse {
-    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
-    70% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
-    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+    70% { transform: scale(1.02); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 
 .pulse-success {
     animation: pulse 2s infinite;
 }
 
-/* Nav Pills Custom Styling */
-.nav-pills .nav-link {
-    color: #64748b;
-    transition: all 0.2s ease;
-}
-
-.nav-pills .nav-link.active {
-    background-color: #3b82f6;
-    color: #fff;
-    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.25);
-}
-
-/* Analysis Styles */
-#analysisCalloutCard {
-    background: linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%);
-    border: 1px solid #bfdbfe !important;
-}
-
-.filter-pill {
-    cursor: pointer;
-    transition: all 0.15s ease-in-out;
-    font-size: 0.8rem;
-    padding: 0.35rem 0.85rem;
-    border-radius: 50rem;
-}
-
-.filter-pill:hover {
-    transform: translateY(-1px);
-}
-
-.filter-pill.active {
-    background-color: #0f172a !important;
-    color: #fff !important;
-    border-color: #0f172a !important;
-}
-
 .modal-xl {
-    max-width: 1280px;
+    max-width: 1260px;
 }
 
 .cursor-pointer {
@@ -166,7 +505,7 @@ body {
     body {
         background-color: #fff;
     }
-    nav, footer, .col-lg-5, #progressCard, #resultsTable, .card-header button, .btn {
+    nav, footer, .col-lg-5, #progressCard, #resultsTable, .card-header button, .btn, .main-navbar {
         display: none !important;
     }
     .col-lg-7 {
@@ -185,3 +524,132 @@ body {
         print-color-adjust: exact;
     }
 }
+
+/* ==========================================
+   HOMEPAGE & PORTAL CARD STYLES
+   ========================================== */
+.hero-banner {
+    background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 50%, #f0fdf4 100%);
+    border: 1px solid var(--slate-200);
+}
+
+.max-w-750 {
+    max-width: 750px;
+}
+
+.portal-card {
+    transition: all 0.2s ease-in-out;
+    border: 1px solid var(--slate-200) !important;
+}
+
+.portal-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.08) !important;
+}
+
+.portal-card.card-blue:hover {
+    border-color: #93c5fd !important;
+}
+
+.portal-card.card-green:hover {
+    border-color: #86efac !important;
+}
+
+.portal-card.card-purple:hover {
+    border-color: #c4b5fd !important;
+}
+
+.portal-icon-wrapper {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+}
+
+.board-badge {
+    background: #ffffff;
+    transition: all 0.15s ease;
+}
+
+.board-badge:hover {
+    background: #f1f5f9;
+    border-color: var(--primary-color) !important;
+    transform: translateY(-2px);
+}
+
+.step-card {
+    background: #f8fafc;
+    border: 1px solid var(--slate-200);
+    border-radius: 12px;
+    height: 100%;
+}
+
+.step-number {
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+.btn-xs {
+    padding: 0.15rem 0.45rem;
+    font-size: 0.75rem;
+}
+
+/* ==========================================
+   OFFICIAL WORD-STYLE SUBJECT FAIL TABLES
+   ========================================== */
+.word-format-table {
+    border: 2px solid #0f172a !important;
+    border-collapse: collapse !important;
+    background-color: #ffffff;
+    font-size: 0.88rem;
+}
+
+.word-format-table th,
+.word-format-table td {
+    border: 1px solid #334155 !important;
+    padding: 0.45rem 0.65rem !important;
+}
+
+.word-format-table thead tr:first-child th {
+    background-color: #f1f5f9 !important;
+    font-weight: 700;
+    font-size: 0.98rem;
+    color: #0f172a;
+}
+
+.word-format-table thead tr:nth-child(2) th {
+    background-color: #f8fafc !important;
+    font-weight: 600;
+    font-size: 0.84rem;
+    color: #475569;
+}
+
+.word-format-table thead tr:nth-child(3) th {
+    background-color: #ffffff !important;
+    font-weight: 700;
+    font-size: 0.86rem;
+    color: #0f172a;
+    border-bottom: 2px solid #0f172a !important;
+}
+
+.word-format-table tbody tr:last-child {
+    background-color: #f8fafc !important;
+    font-weight: 700;
+    border-top: 2px solid #0f172a !important;
+}
+
+.fail-table-card .card {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.fail-table-card .card:hover {
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08) !important;
+}
+

@@ -31,6 +31,48 @@ GRADE_POINTS = {
     "F": 0.0
 }
 
+KNOWN_INSTITUTE_EIINS = {
+    "DALTA": "105820",
+    "BANDERHAT": "107386",
+    "CUMILLA GOVT": "105820",
+    "COMILLA GOVT": "105820",
+    "DHAKA CITY": "107977",
+    "NOTRE DAME": "108274",
+    "RAJUK": "108573",
+    "ADAMJEE": "107845",
+    "VIQARUNNISA": "108348",
+    "HOLY CROSS": "108272",
+    "CHITTAGONG COLLEGE": "133008",
+    "SCIENCE COLLEGE": "108035",
+    "MOHAMMADPUR": "132140",
+}
+
+
+def resolve_institution_eiin(raw_val: str = "", institute: str = "", board: str = "") -> str:
+    """Resolves a valid 6-digit EIIN number from records, institute string, or known institutions."""
+    val = str(raw_val or "").strip()
+    if val and val.isdigit() and 4 <= len(val) <= 8:
+        return val
+
+    inst = str(institute or "").strip()
+    if inst:
+        m = re.search(r"\b(\d{5,7})\b", inst)
+        if m:
+            return m.group(1)
+
+        inst_upper = inst.upper()
+        for k, v in KNOWN_INSTITUTE_EIINS.items():
+            if k in inst_upper:
+                return v
+
+    b_lower = str(board or "").lower()
+    if "cumilla" in b_lower or "comilla" in b_lower:
+        return "105820"
+    if "dhaka" in b_lower:
+        return "107977"
+
+    return "105820"
+
 
 def identify_fourth_subject(subject_grades: Dict[str, str], group: str) -> Optional[str]:
     """
@@ -99,6 +141,15 @@ def normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     if institute == "nan":
         institute = ""
 
+    board = str(raw.get("Board", "") or raw.get("board", "")).strip()
+    if board == "nan":
+        board = ""
+
+    eiin_raw = str(raw.get("EIIN", "") or raw.get("eiin", "") or raw.get("Eiin", "")).strip()
+    if eiin_raw == "nan":
+        eiin_raw = ""
+    eiin = resolve_institution_eiin(eiin_raw, institute, board)
+
     group = str(raw.get("Group", "") or "GENERAL").strip().upper()
     if not group or group in ["NAN", "NONE", "-"]:
         group = "GENERAL"
@@ -136,7 +187,7 @@ def normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     if not subject_grades:
         exclude_keys = {
             "roll", "registration", "reg", "name", "father name", "mother name",
-            "institute", "board", "group", "exam", "year", "result status",
+            "institute", "eiin", "board", "group", "exam", "year", "result status",
             "result", "gpa", "status", "subject grades summary", "subject_grades_summary",
             "type", "session", "created_at"
         }
@@ -235,6 +286,8 @@ def normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "Name": name,
         "Father Name": father_name,
         "Institute": institute,
+        "EIIN": eiin,
+        "Board": board.title() if board else "N/A",
         "Group": group,
         "Type": cand_type,
         "Result": final_status,
@@ -252,6 +305,8 @@ def normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "Subject_Grades": subject_grades,
         "Failed_Subjects": failed_subjects,
         "Failed_Count": len(failed_subjects),
+        "Main_Failed_Subjects": main_failed_subjects,
+        "Main_Failed_Count": len(main_failed_subjects),
         "Passed_Grades_Summary": ", ".join(passed_subjects) if passed_subjects else "None",
         "Raw": raw
     }
@@ -275,6 +330,13 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             "irregular_summary": {},
             "group_type_comparison": [],
             "subject_analysis": [],
+            "merit_list": {"total": 0, "students": []},
+            "failed_list_subject_wise": {
+                "total_failed_students": 0,
+                "total_subject_failures": 0,
+                "subjects": [],
+                "entries": []
+            },
             "one_subject_fail": {"total": 0, "subjects_summary": {}, "students": []},
             "two_subject_fail": {"total": 0, "subjects_summary": {}, "pair_summary": {}, "students": []},
             "multi_subject_fail": {"total": 0, "students": []},
@@ -293,10 +355,24 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     two_subject_fail_students = []
     multi_subject_fail_students = []
 
-    # Frequency maps
+    # Frequency maps - All
     one_sub_freq = defaultdict(int)
     two_sub_freq = defaultdict(int)
     two_sub_pairs = defaultdict(int)
+    three_plus_sub_freq = defaultdict(int)
+
+    # Frequency maps with Regular & Irregular breakdown - All
+    one_sub_type_freq = defaultdict(lambda: {"regular": 0, "irregular": 0, "total": 0})
+    two_sub_type_freq = defaultdict(lambda: {"regular": 0, "irregular": 0, "total": 0})
+    three_plus_type_freq = defaultdict(lambda: {"regular": 0, "irregular": 0, "total": 0})
+
+    # Frequency maps with Regular & Irregular breakdown - Group-wise
+    one_sub_group_freq = defaultdict(lambda: defaultdict(int))
+    two_sub_group_freq = defaultdict(lambda: defaultdict(int))
+    three_plus_group_freq = defaultdict(lambda: defaultdict(int))
+    one_sub_group_type_freq = defaultdict(lambda: defaultdict(lambda: {"regular": 0, "irregular": 0, "total": 0}))
+    two_sub_group_type_freq = defaultdict(lambda: defaultdict(lambda: {"regular": 0, "irregular": 0, "total": 0}))
+    three_plus_group_type_freq = defaultdict(lambda: defaultdict(lambda: {"regular": 0, "irregular": 0, "total": 0}))
 
     # GPA Distributions (Both With 4th and Without 4th subject)
     gpa_dist_with_4th = {
@@ -337,7 +413,8 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         gpa_w4 = st["GPA_With_4th_Numeric"]
         gpa_no4 = st["GPA_Without_4th_Numeric"]
         res = st["Result"]
-        fails = st["Failed_Subjects"]
+        # Failed subjects strictly Without 4th Subject
+        fails = st.get("Main_Failed_Subjects") if "Main_Failed_Subjects" in st else [s for s in st.get("Failed_Subjects", []) if s != st.get("Fourth_Subject")]
         fail_cnt = len(fails)
         is_p = (res == "PASSED")
 
@@ -353,6 +430,7 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "Name": st["Name"],
                 "Father Name": st.get("Father Name", ""),
                 "Institute": st.get("Institute", ""),
+                "Board": st.get("Board", "N/A"),
                 "Group": grp,
                 "Type": c_type,
                 "Result": "ABSENT",
@@ -362,27 +440,40 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         else:
             other_students.append(st)
 
-        # Subject-fail categorization (Only for students who appeared and failed)
+        # Subject-fail categorization (Without 4th Subject - only for students who appeared and failed)
+        is_reg = (c_type == "REGULAR")
         if res != "ABSENT":
             if fail_cnt == 1:
+                s = fails[0]
                 one_subject_fail_students.append({
                     "Roll": st["Roll"],
                     "Registration": st["Registration"],
                     "Name": st["Name"],
+                    "Board": st.get("Board", "N/A"),
                     "Group": grp,
                     "Type": c_type,
-                    "Failed_Subject": fails[0],
+                    "Failed_Subject": s,
                     "Passed_Grades_Summary": st["Passed_Grades_Summary"],
                     "GPA": st["GPA_With_4th"],
                     "GPA_With_4th": st["GPA_With_4th"],
                     "GPA_Without_4th": st["GPA_Without_4th"]
                 })
-                one_sub_freq[fails[0]] += 1
+                one_sub_freq[s] += 1
+                one_sub_group_freq[grp][s] += 1
+                one_sub_type_freq[s]["total"] += 1
+                one_sub_group_type_freq[grp][s]["total"] += 1
+                if is_reg:
+                    one_sub_type_freq[s]["regular"] += 1
+                    one_sub_group_type_freq[grp][s]["regular"] += 1
+                else:
+                    one_sub_type_freq[s]["irregular"] += 1
+                    one_sub_group_type_freq[grp][s]["irregular"] += 1
             elif fail_cnt == 2:
                 two_subject_fail_students.append({
                     "Roll": st["Roll"],
                     "Registration": st["Registration"],
                     "Name": st["Name"],
+                    "Board": st.get("Board", "N/A"),
                     "Group": grp,
                     "Type": c_type,
                     "Failed_Subjects": fails,
@@ -393,6 +484,15 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
                 })
                 for s in fails:
                     two_sub_freq[s] += 1
+                    two_sub_group_freq[grp][s] += 1
+                    two_sub_type_freq[s]["total"] += 1
+                    two_sub_group_type_freq[grp][s]["total"] += 1
+                    if is_reg:
+                        two_sub_type_freq[s]["regular"] += 1
+                        two_sub_group_type_freq[grp][s]["regular"] += 1
+                    else:
+                        two_sub_type_freq[s]["irregular"] += 1
+                        two_sub_group_type_freq[grp][s]["irregular"] += 1
                 pair_key = " & ".join(sorted(fails))
                 two_sub_pairs[pair_key] += 1
             elif fail_cnt >= 3:
@@ -400,6 +500,7 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
                     "Roll": st["Roll"],
                     "Registration": st["Registration"],
                     "Name": st["Name"],
+                    "Board": st.get("Board", "N/A"),
                     "Group": grp,
                     "Type": c_type,
                     "Failed_Count": fail_cnt,
@@ -409,6 +510,17 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
                     "GPA_With_4th": st["GPA_With_4th"],
                     "GPA_Without_4th": st["GPA_Without_4th"]
                 })
+                for s in fails:
+                    three_plus_sub_freq[s] += 1
+                    three_plus_group_freq[grp][s] += 1
+                    three_plus_type_freq[s]["total"] += 1
+                    three_plus_group_type_freq[grp][s]["total"] += 1
+                    if is_reg:
+                        three_plus_type_freq[s]["regular"] += 1
+                        three_plus_group_type_freq[grp][s]["regular"] += 1
+                    else:
+                        three_plus_type_freq[s]["irregular"] += 1
+                        three_plus_group_type_freq[grp][s]["irregular"] += 1
 
         # GPA distribution: With 4th Subject
         if res == "FAIL" or fail_cnt > 0 or not is_p:
@@ -661,17 +773,191 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Sort subjects: first by group, type, then subject
     subject_analysis.sort(key=lambda x: (x["group"], x["type"], x["subject"]))
 
-    # Sort 1-fail and 2-fail subjects by frequency descending
+    # Sort 1-fail, 2-fail, and 3+-fail subjects by frequency descending
     sorted_one_sub_freq = dict(sorted(one_sub_freq.items(), key=lambda item: item[1], reverse=True))
     sorted_two_sub_freq = dict(sorted(two_sub_freq.items(), key=lambda item: item[1], reverse=True))
     sorted_two_sub_pairs = dict(sorted(two_sub_pairs.items(), key=lambda item: item[1], reverse=True))
+    sorted_three_plus_sub_freq = dict(sorted(three_plus_sub_freq.items(), key=lambda item: item[1], reverse=True))
 
     available_groups = sorted(list(group_students.keys()))
     available_types = sorted(list(type_students.keys()))
+    available_boards = sorted(list({r["Board"] for r in normalized if r.get("Board") and r["Board"] != "N/A"}))
+
+    # Build standardized Subject Fail Tables (Without 4th Subject) for All and Group-Wise with Regular & Irregular Breakdown
+    sorted_one_sub_type_all = dict(sorted(one_sub_type_freq.items(), key=lambda item: (-item[1]["total"], item[0])))
+    sorted_two_sub_type_all = dict(sorted(two_sub_type_freq.items(), key=lambda item: (-item[1]["total"], item[0])))
+    sorted_three_plus_type_all = dict(sorted(three_plus_type_freq.items(), key=lambda item: (-item[1]["total"], item[0])))
+
+    subject_fail_tables = {
+        "one_subject_fail": {
+            "title": "One Subject Fail (Without 4th Subject)",
+            "all": sorted_one_sub_type_all,
+            "by_group": {
+                grp: dict(sorted(one_sub_group_type_freq[grp].items(), key=lambda item: (-item[1]["total"], item[0])))
+                for grp in available_groups
+            }
+        },
+        "two_subject_fail": {
+            "title": "Two Subject Fail (Without 4th Subject)",
+            "all": sorted_two_sub_type_all,
+            "by_group": {
+                grp: dict(sorted(two_sub_group_type_freq[grp].items(), key=lambda item: (-item[1]["total"], item[0])))
+                for grp in available_groups
+            }
+        },
+        "three_plus_subject_fail": {
+            "title": "Three or More Subject Fail (Without 4th Subject)",
+            "all": sorted_three_plus_type_all,
+            "by_group": {
+                grp: dict(sorted(three_plus_group_type_freq[grp].items(), key=lambda item: (-item[1]["total"], item[0])))
+                for grp in available_groups
+            }
+        }
+    }
+
+    # =========================================================================
+    # 1. STUDENT MERIT LIST
+    # =========================================================================
+    def merit_sort_key(s):
+        gpa_w4 = s.get("GPA_With_4th_Numeric", 0.0)
+        gpa_no4 = s.get("GPA_Without_4th_Numeric", 0.0)
+        subj_grades = s.get("Subject_Grades", {})
+        a_plus_cnt = sum(1 for g in subj_grades.values() if g == "A+")
+        a_cnt = sum(1 for g in subj_grades.values() if g == "A")
+        total_gp = sum(GRADE_POINTS.get(g, 0.0) for g in subj_grades.values())
+        try:
+            roll_val = int(str(s.get("Roll", 0)).strip())
+        except (ValueError, TypeError):
+            roll_val = 99999999
+        return (-gpa_w4, -gpa_no4, -a_plus_cnt, -a_cnt, -total_gp, roll_val)
+
+    sorted_passed = sorted(passed_students, key=merit_sort_key)
+
+    group_rank_counters = defaultdict(int)
+    merit_students = []
+    for rank, st in enumerate(sorted_passed, start=1):
+        grp = st["Group"]
+        group_rank_counters[grp] += 1
+        grp_rank = group_rank_counters[grp]
+
+        subj_grades = st.get("Subject_Grades", {})
+        a_plus_cnt = sum(1 for g in subj_grades.values() if g == "A+")
+        a_cnt = sum(1 for g in subj_grades.values() if g == "A")
+        a_minus_cnt = sum(1 for g in subj_grades.values() if g == "A-")
+        b_cnt = sum(1 for g in subj_grades.values() if g == "B")
+        c_cnt = sum(1 for g in subj_grades.values() if g == "C")
+        d_cnt = sum(1 for g in subj_grades.values() if g == "D")
+
+        merit_students.append({
+            "Merit_Position": rank,
+            "Group_Merit_Position": grp_rank,
+            "Roll": st["Roll"],
+            "Registration": st.get("Registration", ""),
+            "Name": st["Name"],
+            "Father Name": st.get("Father Name", ""),
+            "Institute": st.get("Institute", ""),
+            "Board": st.get("Board", "N/A"),
+            "Group": grp,
+            "Type": st["Type"],
+            "GPA": st["GPA_With_4th"],
+            "GPA_With_4th": st["GPA_With_4th"],
+            "GPA_Without_4th": st["GPA_Without_4th"],
+            "GPA_With_4th_Numeric": st["GPA_With_4th_Numeric"],
+            "GPA_Without_4th_Numeric": st["GPA_Without_4th_Numeric"],
+            "Is_GPA5_With_4th": st["Is_GPA5_With_4th"],
+            "Is_GPA5_Without_4th": st["Is_GPA5_Without_4th"],
+            "A_Plus_Count": a_plus_cnt,
+            "A_Count": a_cnt,
+            "A_Minus_Count": a_minus_cnt,
+            "B_Count": b_cnt,
+            "C_Count": c_cnt,
+            "D_Count": d_cnt,
+            "Subject_Grades": subj_grades,
+            "Passed_Grades_Summary": st.get("Passed_Grades_Summary", "")
+        })
+
+    # =========================================================================
+    # 2. FAILED LIST SUBJECT WISE (ASCENDING ORDER)
+    # =========================================================================
+    subj_fail_map = defaultdict(list)
+    for st in failed_students:
+        for subj in st.get("Failed_Subjects", []):
+            subj_fail_map[subj].append(st)
+
+    # Sort subject names in Ascending order (A -> Z / Subject Code)
+    sorted_fail_subjs_asc = sorted(subj_fail_map.keys())
+
+    failed_subjects_summary = []
+    flat_failed_entries = []
+
+    def roll_sort_key(s):
+        try:
+            return int(str(s.get("Roll", 0)).strip())
+        except (ValueError, TypeError):
+            return str(s.get("Roll", ""))
+
+    for subj in sorted_fail_subjs_asc:
+        s_list = subj_fail_map[subj]
+        s_list_sorted = sorted(s_list, key=roll_sort_key)
+
+        failed_subjects_summary.append({
+            "subject": subj,
+            "count": len(s_list_sorted),
+            "regular_count": sum(1 for s in s_list_sorted if s.get("Type") == "REGULAR"),
+            "irregular_count": sum(1 for s in s_list_sorted if s.get("Type") == "IRREGULAR"),
+            "students": [
+                {
+                    "Roll": s["Roll"],
+                    "Registration": s.get("Registration", ""),
+                    "Name": s["Name"],
+                    "Group": s["Group"],
+                    "Type": s["Type"],
+                    "Failed_Count": s["Failed_Count"],
+                    "All_Failed_Subjects": s.get("Failed_Subjects", []),
+                    "Passed_Grades_Summary": s.get("Passed_Grades_Summary", "")
+                }
+                for s in s_list_sorted
+            ]
+        })
+
+        for s in s_list_sorted:
+            flat_failed_entries.append({
+                "Failed_Subject": subj,
+                "Roll": s["Roll"],
+                "Registration": s.get("Registration", ""),
+                "Name": s["Name"],
+                "Father Name": s.get("Father Name", ""),
+                "Institute": s.get("Institute", ""),
+                "Board": s.get("Board", "N/A"),
+                "Group": s["Group"],
+                "Type": s["Type"],
+                "Failed_Count": s["Failed_Count"],
+                "All_Failed_Subjects": s.get("Failed_Subjects", []),
+                "Passed_Grades_Summary": s.get("Passed_Grades_Summary", "")
+            })
+
+    all_institutes = [
+        str(r.get("Institute", "")).strip()
+        for r in normalized
+        if r.get("Institute") and str(r.get("Institute")).strip().lower() not in ["", "nan", "none", "-"]
+    ]
+    from collections import Counter
+    top_institute = Counter(all_institutes).most_common(1)[0][0] if all_institutes else ""
+
+    all_eiins = [
+        str(r.get("EIIN", "")).strip()
+        for r in normalized
+        if r.get("EIIN") and str(r.get("EIIN")).strip().lower() not in ["", "nan", "none", "-"]
+    ]
+    top_eiin = Counter(all_eiins).most_common(1)[0][0] if all_eiins else resolve_institution_eiin("", top_institute, "")
 
     return {
         "total_students": total_students,
+        "institute": top_institute,
+        "eiin": top_eiin,
         "summary": {
+            "institute": top_institute,
+            "eiin": top_eiin,
             "total_students": total_students,
             "appeared": appeared,
             "passed": total_passed,
@@ -696,19 +982,34 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "irregular_summary": irregular_summary,
         "group_type_comparison": group_type_comparison,
         "subject_analysis": subject_analysis,
+        "merit_list": {
+            "total": len(merit_students),
+            "students": merit_students
+        },
+        "failed_list_subject_wise": {
+            "total_failed_students": len(failed_students),
+            "total_subject_failures": len(flat_failed_entries),
+            "subjects": failed_subjects_summary,
+            "entries": flat_failed_entries
+        },
+        "subject_fail_tables": subject_fail_tables,
         "one_subject_fail": {
             "total": len(one_subject_fail_students),
             "subjects_summary": sorted_one_sub_freq,
+            "by_group": subject_fail_tables["one_subject_fail"]["by_group"],
             "students": sorted(one_subject_fail_students, key=lambda s: (s["Failed_Subject"], s["Roll"]))
         },
         "two_subject_fail": {
             "total": len(two_subject_fail_students),
             "subjects_summary": sorted_two_sub_freq,
             "pair_summary": sorted_two_sub_pairs,
+            "by_group": subject_fail_tables["two_subject_fail"]["by_group"],
             "students": sorted(two_subject_fail_students, key=lambda s: (s["Failed_Subjects"][0] if s["Failed_Subjects"] else "", s["Roll"]))
         },
         "multi_subject_fail": {
             "total": len(multi_subject_fail_students),
+            "subjects_summary": sorted_three_plus_sub_freq,
+            "by_group": subject_fail_tables["three_plus_subject_fail"]["by_group"],
             "students": sorted(multi_subject_fail_students, key=lambda s: (-s["Failed_Count"], s["Roll"]))
         },
         "gpa_distribution": gpa_dist_with_4th,
@@ -716,7 +1017,8 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "gpa_distribution_without_4th": gpa_dist_without_4th,
         "absent_analysis": absent_analysis,
         "available_groups": available_groups,
-        "available_types": available_types
+        "available_types": available_types,
+        "available_boards": available_boards
     }
 
 
@@ -737,7 +1039,9 @@ def generate_analysis_excel_bytes(analysis: Dict[str, Any], meta: Optional[Dict[
     exam = meta.get("exam", "HSC / SSC").upper()
     year = meta.get("year", "")
     board = meta.get("board", "").title()
-    title_sub = f"Examination: {exam} {year} | Board: {board}"
+    eiin = meta.get("eiin") or analysis.get("eiin") or (analysis.get("summary", {}).get("eiin", ""))
+    eiin_str = f" | EIIN: {eiin}" if eiin else ""
+    title_sub = f"Examination: {exam} {year} | Board: {board}{eiin_str}"
 
     # Palette Styles
     header_fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
@@ -1386,7 +1690,397 @@ def generate_analysis_excel_bytes(analysis: Dict[str, Any], meta: Optional[Dict[
         col_letter = get_column_letter(col[0].column)
         ws_absent.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 40)
 
+    # =========================================================================
+    # SHEET 8: STUDENT MERIT LIST
+    # =========================================================================
+    ws_merit = wb.create_sheet(title="Student Merit List")
+    ws_merit.views.sheetView[0].showGridLines = True
+
+    merit_data = analysis.get("merit_list", {})
+    merit_students = merit_data.get("students", [])
+
+    ws_merit.cell(row=1, column=1, value="STUDENT MERIT LIST (ACADEMIC RANKING)").font = Font(name="Calibri", size=12, bold=True, color="0F172A")
+    merit_headers = ["Merit Rank", "Group Rank", "Roll No", "Reg No", "Student Name", "Group", "Candidate Type", "GPA (With 4th)", "GPA (Without 4th)", "Grades Summary", "Passed Subjects Detail"]
+    for col_idx, h_text in enumerate(merit_headers, start=1):
+        c = ws_merit.cell(row=2, column=col_idx, value=h_text)
+        c.fill = header_fill
+        c.font = header_font
+        c.alignment = align_center
+        c.border = thin_border
+
+    curr_r_m = 3
+    if not merit_students:
+        c = ws_merit.cell(row=curr_r_m, column=1, value="No passed students to rank.")
+        c.font = normal_font
+        ws_merit.merge_cells(start_row=curr_r_m, start_column=1, end_row=curr_r_m, end_column=11)
+    else:
+        for st in merit_students:
+            a_plus = st.get("A_Plus_Count", 0)
+            a_cnt = st.get("A_Count", 0)
+            grades_brief = f"{a_plus} A+, {a_cnt} A" if a_plus or a_cnt else "Passed"
+            row_vals = [
+                st.get("Merit_Position", "-"),
+                st.get("Group_Merit_Position", "-"),
+                st.get("Roll", "-"),
+                st.get("Registration", "-"),
+                st.get("Name", "N/A"),
+                st.get("Group", "-"),
+                st.get("Type", "REGULAR"),
+                st.get("GPA_With_4th", "-"),
+                st.get("GPA_Without_4th", "-"),
+                grades_brief,
+                st.get("Passed_Grades_Summary", "")
+            ]
+            for col_idx, val in enumerate(row_vals, start=1):
+                c = ws_merit.cell(row=curr_r_m, column=col_idx, value=val)
+                c.font = normal_font
+                c.border = thin_border
+                c.alignment = align_center if col_idx in [1, 2, 3, 4, 6, 7, 8, 9, 10] else align_left
+                if col_idx == 1 and val in [1, 2, 3]:
+                    c.fill = PatternFill(start_color="FEF08A", end_color="FEF08A", fill_type="solid")
+                    c.font = bold_font
+            curr_r_m += 1
+
+    for col in ws_merit.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws_merit.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 45)
+
+    # =========================================================================
+    # SHEET 9: SUBJECT-WISE FAILED LIST (ASCENDING ORDER)
+    # =========================================================================
+    ws_fail_subj = wb.create_sheet(title="Subject Wise Failed List")
+    ws_fail_subj.views.sheetView[0].showGridLines = True
+
+    fail_subj_data = analysis.get("failed_list_subject_wise", {})
+    fail_entries = fail_subj_data.get("entries", [])
+
+    ws_fail_subj.cell(row=1, column=1, value="FAILED LIST SUBJECT WISE (ASCENDING ORDER)").font = Font(name="Calibri", size=12, bold=True, color="0F172A")
+    fail_subj_headers = ["Failed Subject", "Roll No", "Reg No", "Student Name", "Group", "Candidate Type", "Fails Count", "All Failed Subjects", "Passed Subject Grades"]
+    for col_idx, h_text in enumerate(fail_subj_headers, start=1):
+        c = ws_fail_subj.cell(row=2, column=col_idx, value=h_text)
+        c.fill = header_fill
+        c.font = header_font
+        c.alignment = align_center
+        c.border = thin_border
+
+    curr_r_f = 3
+    if not fail_entries:
+        c = ws_fail_subj.cell(row=curr_r_f, column=1, value="No failed students recorded.")
+        c.font = normal_font
+        ws_fail_subj.merge_cells(start_row=curr_r_f, start_column=1, end_row=curr_r_f, end_column=9)
+    else:
+        for item in fail_entries:
+            all_f = item.get("All_Failed_Subjects", [])
+            row_vals = [
+                item.get("Failed_Subject", "-"),
+                item.get("Roll", "-"),
+                item.get("Registration", "-"),
+                item.get("Name", "N/A"),
+                item.get("Group", "-"),
+                item.get("Type", "REGULAR"),
+                item.get("Failed_Count", 1),
+                ", ".join(all_f) if isinstance(all_f, list) else str(all_f),
+                item.get("Passed_Grades_Summary", "")
+            ]
+            for col_idx, val in enumerate(row_vals, start=1):
+                c = ws_fail_subj.cell(row=curr_r_f, column=col_idx, value=val)
+                c.font = normal_font
+                c.border = thin_border
+                c.alignment = align_center if col_idx in [2, 3, 5, 6, 7] else align_left
+                if col_idx == 1:
+                    c.font = bold_font
+                    c.fill = fail_badge_fill
+            curr_r_f += 1
+
+    for col in ws_fail_subj.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws_fail_subj.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 45)
+
+    # =========================================================================
+    # SHEET 10: FAIL ANALYSIS (SUBJECT-WISE: REGULAR, IRREGULAR, TOTAL)
+    # =========================================================================
+    ws_fail_tables = wb.create_sheet(title="Fail Analysis")
+    ws_fail_tables.views.sheetView[0].showGridLines = True
+
+    fail_tables_data = analysis.get("subject_fail_tables", {})
+    one_table_all = fail_tables_data.get("one_subject_fail", {}).get("all", {})
+    one_table_groups = fail_tables_data.get("one_subject_fail", {}).get("by_group", {})
+
+    two_table_all = fail_tables_data.get("two_subject_fail", {}).get("all", {})
+    two_table_groups = fail_tables_data.get("two_subject_fail", {}).get("by_group", {})
+
+    three_table_all = fail_tables_data.get("three_plus_subject_fail", {}).get("all", {})
+    three_table_groups = fail_tables_data.get("three_plus_subject_fail", {}).get("by_group", {})
+
+    all_groups_list = sorted(list(analysis.get("groups_summary", {}).keys()))
+
+    def write_excel_fail_block(ws, start_col, start_r, scope_title, cat_title, subj_dict):
+        # Row 1: Scope (All / Group: ...) across 4 columns
+        c_scope = ws.cell(row=start_r, column=start_col, value=scope_title)
+        c_scope.font = Font(name="Calibri", size=11, bold=True, color="0F172A")
+        c_scope.fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+        c_scope.alignment = align_center
+        ws.merge_cells(start_row=start_r, start_column=start_col, end_row=start_r, end_column=start_col + 3)
+        for ci in range(start_col, start_col + 4):
+            ws.cell(row=start_r, column=ci).border = thin_border
+
+        # Row 2: Category (e.g. One Subject Fail (Without 4th Subject)) across 4 columns
+        c_cat = ws.cell(row=start_r + 1, column=start_col, value=cat_title)
+        c_cat.font = Font(name="Calibri", size=10, bold=True, color="1E293B")
+        c_cat.fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        c_cat.alignment = align_center
+        ws.merge_cells(start_row=start_r + 1, start_column=start_col, end_row=start_r + 1, end_column=start_col + 3)
+        for ci in range(start_col, start_col + 4):
+            ws.cell(row=start_r + 1, column=ci).border = thin_border
+
+        # Row 3: 4 Headers: Subject | Regular | Irregular | Total
+        headers = ["Subject", "Regular", "Irregular", "Total"]
+        for h_idx, h_text in enumerate(headers):
+            h_cell = ws.cell(row=start_r + 2, column=start_col + h_idx, value=h_text)
+            h_cell.font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+            h_cell.fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+            h_cell.alignment = align_center
+            h_cell.border = thin_border
+
+        # Rows
+        r_idx = start_r + 3
+        tot_reg = 0
+        tot_irreg = 0
+        tot_all = 0
+
+        if not subj_dict:
+            e1 = ws.cell(row=r_idx, column=start_col, value="No failures recorded")
+            e1.font = Font(name="Calibri", size=10, italic=True, color="64748B")
+            e1.alignment = align_left
+            for ci in range(start_col, start_col + 4):
+                c = ws.cell(row=r_idx, column=ci)
+                c.border = thin_border
+                if ci > start_col:
+                    c.value = 0
+                    c.font = Font(name="Calibri", size=10, color="64748B")
+                    c.alignment = align_center
+            r_idx += 1
+        else:
+            for s_name, item_val in subj_dict.items():
+                if isinstance(item_val, dict):
+                    reg_c = item_val.get("regular", 0)
+                    irreg_c = item_val.get("irregular", 0)
+                    total_c = item_val.get("total", reg_c + irreg_c)
+                else:
+                    reg_c = item_val
+                    irreg_c = 0
+                    total_c = item_val
+
+                s_c = ws.cell(row=r_idx, column=start_col, value=s_name)
+                c_reg = ws.cell(row=r_idx, column=start_col + 1, value=reg_c)
+                c_irreg = ws.cell(row=r_idx, column=start_col + 2, value=irreg_c)
+                c_tot = ws.cell(row=r_idx, column=start_col + 3, value=total_c)
+
+                s_c.font = normal_font
+                c_reg.font = Font(name="Calibri", size=10, color="2563EB")
+                c_irreg.font = Font(name="Calibri", size=10, color="D97706")
+                c_tot.font = Font(name="Calibri", size=10, bold=True, color="DC2626")
+
+                for cell_item in [s_c, c_reg, c_irreg, c_tot]:
+                    cell_item.border = thin_border
+                s_c.alignment = align_left
+                c_reg.alignment = align_center
+                c_irreg.alignment = align_center
+                c_tot.alignment = align_center
+
+                tot_reg += reg_c
+                tot_irreg += irreg_c
+                tot_all += total_c
+                r_idx += 1
+
+        # Total Row
+        t1 = ws.cell(row=r_idx, column=start_col, value="Total")
+        t_reg = ws.cell(row=r_idx, column=start_col + 1, value=tot_reg)
+        t_irreg = ws.cell(row=r_idx, column=start_col + 2, value=tot_irreg)
+        t_all = ws.cell(row=r_idx, column=start_col + 3, value=tot_all)
+
+        for t_cell in [t1, t_reg, t_irreg, t_all]:
+            t_cell.font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+            t_cell.fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+            t_cell.border = thin_border
+            t_cell.alignment = align_center
+        t1.alignment = align_left
+
+        return r_idx + 2
+
+    # Render Category 1: One Subject Fail (Cols A-D, start_col = 1)
+    curr_r_1 = 2
+    curr_r_1 = write_excel_fail_block(ws_fail_tables, 1, curr_r_1, "All", "One Subject Fail (Without 4th Subject)", one_table_all)
+    for grp in all_groups_list:
+        curr_r_1 = write_excel_fail_block(ws_fail_tables, 1, curr_r_1, f"Group: {grp}", "One Subject Fail (Without 4th Subject)", one_table_groups.get(grp, {}))
+
+    # Render Category 2: Two Subject Fail (Cols F-I, start_col = 6)
+    curr_r_2 = 2
+    curr_r_2 = write_excel_fail_block(ws_fail_tables, 6, curr_r_2, "All", "Two Subject Fail (Without 4th Subject)", two_table_all)
+    for grp in all_groups_list:
+        curr_r_2 = write_excel_fail_block(ws_fail_tables, 6, curr_r_2, f"Group: {grp}", "Two Subject Fail (Without 4th Subject)", two_table_groups.get(grp, {}))
+
+    # Render Category 3: Three or More Subject Fail (Cols K-N, start_col = 11)
+    curr_r_3 = 2
+    curr_r_3 = write_excel_fail_block(ws_fail_tables, 11, curr_r_3, "All", "Three or More Subject Fail (Without 4th Subject)", three_table_all)
+    for grp in all_groups_list:
+        curr_r_3 = write_excel_fail_block(ws_fail_tables, 11, curr_r_3, f"Group: {grp}", "Three or More Subject Fail (Without 4th Subject)", three_table_groups.get(grp, {}))
+
+    # Auto-fit columns
+    for col in ws_fail_tables.columns:
+        vals = [str(cell.value or "") for cell in col if cell.value is not None]
+        max_len = max((len(v) for v in vals), default=0)
+        col_letter = get_column_letter(col[0].column)
+        if col[0].column in [5, 10]:
+            ws_fail_tables.column_dimensions[col_letter].width = 4
+        elif col[0].column in [2, 3, 4, 7, 8, 9, 12, 13, 14]:
+            ws_fail_tables.column_dimensions[col_letter].width = 12
+        else:
+            ws_fail_tables.column_dimensions[col_letter].width = max(max_len + 3, 20)
+
     stream = io.BytesIO()
     wb.save(stream)
     stream.seek(0)
     return stream
+
+
+def generate_demo_dataset(count: int = 50) -> List[Dict[str, Any]]:
+    """
+    Generates a realistic mock batch of student result records for demonstration,
+    featuring Science, Business Studies, and Humanities groups, Regular and Irregular candidates,
+    realistic GPA distributions (GPA 5.0, 4.x, 3.x), 1-subject fails, 2-subject fails, and absentees.
+    """
+    import random
+
+    names = [
+        "MD. TANVIR HASAN", "NUSRAT JAHAN", "RAKIBUL ISLAM", "FATEMA AKTER",
+        "SAKIB AL HASAN", "SADIA SULTANA", "ARIFUR RAHMAN", "MIM AKTER",
+        "MEHEDI HASAN", "JANNATUL MAOWA", "KAMRUN NAHAR", "DIPA AKTER",
+        "MAHIN AHMED", "SUMAIYA AKTER", "FARHAN TANVIR", "NAFISA ISLAM",
+        "SHAKIL KHAN", "TASNIA RAHMAN", "AL AMIN", "SABRINA JAHAN",
+        "ZAHID HASAN", "SUMONA PARVIN", "MAHMUDUL HASAN", "ANIKA TAHSIN"
+    ]
+    groups = ["SCIENCE", "BUSINESS STUDIES", "HUMANITIES"]
+    types = ["REGULAR", "REGULAR", "REGULAR", "IRREGULAR"]
+
+    curricula = {
+        "SCIENCE": [
+            ("101", "BANGLA"), ("107", "ENGLISH"), ("275", "INFORMATION & COMMUNICATION TECHNOLOGY"),
+            ("174", "PHYSICS"), ("175", "CHEMISTRY"), ("176", "BIOLOGY"), ("129", "HIGHER MATHEMATICS (4TH)")
+        ],
+        "BUSINESS STUDIES": [
+            ("101", "BANGLA"), ("107", "ENGLISH"), ("275", "INFORMATION & COMMUNICATION TECHNOLOGY"),
+            ("253", "ACCOUNTING"), ("277", "BUSINESS ORGANIZATION & MANAGEMENT"),
+            ("286", "PRODUCTION MANAGEMENT & MARKETING"), ("292", "FINANCE, BANKING & INSURANCE (4TH)")
+        ],
+        "HUMANITIES": [
+            ("101", "BANGLA"), ("107", "ENGLISH"), ("275", "INFORMATION & COMMUNICATION TECHNOLOGY"),
+            ("109", "ECONOMICS"), ("269", "CIVICS & GOOD GOVERNANCE"), ("304", "SOCIOLOGY"),
+            ("121", "LOGIC (4TH)")
+        ]
+    }
+
+    records = []
+    for i in range(count):
+        grp = groups[i % len(groups)]
+        stype = types[i % len(types)]
+        roll = str(160000 + i)
+        reg = str(1512345600 + i)
+        name = names[i % len(names)] + (f" ({i+1})" if i >= len(names) else "")
+        subjects = curricula[grp]
+
+        # Define performance categories
+        if i == count - 1:
+            # 1 Absent student
+            rec = {
+                "Roll": roll,
+                "Registration": reg,
+                "Name": name,
+                "Father Name": "MD. ABDUR RAHIM",
+                "Mother Name": "MRS. RAHIMA BEGUM",
+                "Institute": "CUMILLA GOVT. MODEL COLLEGE (105820)",
+                "Board": "Cumilla",
+                "Group": grp,
+                "Type": stype,
+                "Exam": "HSC",
+                "Year": "2026",
+                "Result": "ABSENT",
+                "GPA": "0.00",
+                "Subject_Grades": {},
+                "Subject_Grades_Summary": "ABSENT"
+            }
+            records.append(rec)
+            continue
+
+        subj_grades = {}
+        fail_count = 0
+        if i in [3, 9, 17, 26, 35]:
+            target_fails = 1
+        elif i in [7, 21, 39]:
+            target_fails = 2
+        elif i in [14]:
+            target_fails = 3
+        else:
+            target_fails = 0
+
+        for s_idx, (code, sname) in enumerate(subjects):
+            full_name = f"{code} - {sname}"
+            if target_fails > 0 and s_idx == 3:
+                subj_grades[full_name] = "F"
+                fail_count += 1
+            elif target_fails > 1 and s_idx == 4:
+                subj_grades[full_name] = "F"
+                fail_count += 1
+            elif target_fails > 2 and s_idx == 5:
+                subj_grades[full_name] = "F"
+                fail_count += 1
+            else:
+                if i % 6 == 0:
+                    subj_grades[full_name] = "A+"
+                elif i % 6 in [1, 2]:
+                    subj_grades[full_name] = "A" if s_idx % 2 == 0 else "A+"
+                elif i % 6 in [4]:
+                    subj_grades[full_name] = "A-" if s_idx % 2 == 0 else "B"
+                else:
+                    subj_grades[full_name] = "B" if s_idx % 2 == 0 else "C"
+
+        if fail_count > 0:
+            result = f"FAILED IN {fail_count} SUBJECT" + ("S" if fail_count > 1 else "")
+            gpa = "0.00"
+        else:
+            result = "PASSED"
+            if all(g == "A+" for g in subj_grades.values()):
+                gpa = "5.00"
+            elif i % 6 == 1:
+                gpa = "4.83"
+            elif i % 6 == 2:
+                gpa = "4.58"
+            elif i % 6 == 4:
+                gpa = "3.75"
+            else:
+                gpa = "3.25"
+
+        summary_parts = [f"{k}: {v}" for k, v in subj_grades.items()]
+        rec = {
+            "Roll": roll,
+            "Registration": reg,
+            "Name": name,
+            "Father Name": "MD. ANWAR HOSSAIN",
+            "Mother Name": "MRS. FARIDA YASMIN",
+            "Institute": "CUMILLA GOVT. MODEL COLLEGE (105820)",
+            "Board": "Cumilla",
+            "Group": grp,
+            "Type": stype,
+            "Exam": "HSC",
+            "Year": "2026",
+            "Result": result,
+            "GPA": gpa,
+            "Subject_Grades": subj_grades,
+            "Subject_Grades_Summary": ", ".join(summary_parts)
+        }
+        records.append(rec)
+
+    return records
+

@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import uuid
 from datetime import datetime
@@ -26,8 +27,8 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from scraper import scrape_single_student, scrape_student_batch
-from analysis import compute_result_analysis, generate_analysis_excel_bytes
+from scraper import scrape_single_student, scrape_student_batch, get_v2_captcha
+from analysis import compute_result_analysis, generate_analysis_excel_bytes, generate_demo_dataset, resolve_institution_eiin
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("app")
@@ -57,6 +58,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def add_no_cache_for_static(request: Request, call_next):
+    """Ensures static assets like JS and CSS are never served with stale browser cache."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 # Mount static files
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
@@ -67,9 +80,98 @@ JOBS: Dict[str, Dict[str, Any]] = {}
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    """Renders the main Bootstrap user interface."""
-    return templates.TemplateResponse(request=request, name="index.html")
+async def home_page(request: Request):
+    """Renders the Home landing page."""
+    return templates.TemplateResponse(request=request, name="home.html", context={"page": "home"})
+
+
+@app.get("/board-result", response_class=HTMLResponse)
+async def board_result_page(request: Request):
+    """Renders the General Education Board Result page."""
+    return templates.TemplateResponse(request=request, name="board_result.html", context={"page": "board_result"})
+
+
+@app.get("/cumilla-result", response_class=HTMLResponse)
+async def cumilla_result_page(request: Request):
+    """Renders the dedicated Cumilla Education Board Result page."""
+    return templates.TemplateResponse(request=request, name="cumilla_result.html", context={"page": "cumilla_result"})
+
+
+@app.get("/result-analysis", response_class=HTMLResponse)
+async def result_analysis_page(request: Request):
+    """Renders the comprehensive Result Analysis & Institutional Performance Dashboard."""
+    return templates.TemplateResponse(request=request, name="result_analysis.html", context={"page": "result_analysis"})
+
+
+@app.get("/index", response_class=HTMLResponse)
+async def legacy_index(request: Request):
+    """Backward compatibility for /index."""
+    return templates.TemplateResponse(request=request, name="home.html", context={"page": "home"})
+
+
+@app.get("/api/demo-analysis")
+async def get_demo_analysis_endpoint():
+    """Provides a realistic pre-computed demo dataset for instant institutional preview."""
+    try:
+        demo_records = generate_demo_dataset(50)
+        analysis_data = compute_result_analysis(demo_records)
+        return {
+            "success": True,
+            "filename": "Demo_College_HSC_2026.xlsx",
+            "total_records": len(demo_records),
+            "analysis": analysis_data
+        }
+    except Exception as e:
+        logger.exception("Error generating demo analysis:")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/start-extraction-rolls")
+async def start_extraction_rolls(
+    rolls: str = Form(...),
+    exam: str = Form(...),
+    year: str = Form(...),
+    board: str = Form(...),
+    demo_mode: bool = Form(False)
+):
+    """
+    Accepts student roll numbers entered/pasted directly as text,
+    parses them, and initializes an extraction job with an SSE event queue.
+    """
+    raw_rolls = re.split(r"[\s,;\n\r\t]+", rolls.strip())
+    valid_rolls = [r.strip() for r in raw_rolls if r.strip().isdigit()]
+
+    if not valid_rolls:
+        raise HTTPException(status_code=400, detail="No valid numeric roll numbers were found in your input.")
+
+    records = [{"Roll": r, "Registration": ""} for r in valid_rolls]
+
+    job_id = str(uuid.uuid4())
+    event_queue = asyncio.Queue()
+
+    JOBS[job_id] = {
+        "queue": event_queue,
+        "records": records,
+        "results": [],
+        "exam": exam,
+        "year": year,
+        "board": board,
+        "demo_mode": demo_mode,
+        "status": "processing",
+        "created_at": datetime.now(),
+        "files": {}
+    }
+
+    asyncio.create_task(run_extraction_task(job_id))
+
+    return {
+        "job_id": job_id,
+        "total_students": len(records),
+        "exam": exam,
+        "year": year,
+        "board": board,
+        "demo_mode": demo_mode
+    }
 
 
 @app.get("/sample-csv")
@@ -165,6 +267,17 @@ async def start_extraction(
     }
 
 
+@app.get("/api/captcha")
+async def get_captcha_endpoint():
+    """Provides a fresh 4-digit security code / captcha image for general education boards."""
+    try:
+        data = await asyncio.to_thread(get_v2_captcha)
+        return data
+    except Exception as e:
+        logger.warning(f"Error serving captcha endpoint: {e}")
+        return {"success": False, "image": "", "predicted": ""}
+
+
 @app.post("/api/check-individual")
 async def check_individual(
     exam: str = Form(...),
@@ -172,6 +285,7 @@ async def check_individual(
     board: str = Form(...),
     roll: str = Form(...),
     reg: str = Form(""),
+    captcha: str = Form(""),
     demo_mode: bool = Form(False)
 ):
     """
@@ -180,6 +294,7 @@ async def check_individual(
     """
     roll = roll.strip()
     reg = reg.strip()
+    captcha = captcha.strip()
     if not roll:
         raise HTTPException(status_code=400, detail="Roll number is required.")
 
@@ -190,12 +305,13 @@ async def check_individual(
             board=board,
             roll=roll,
             reg=reg,
+            captcha=captcha,
             demo_mode=demo_mode
         )
         return {"success": True, "data": result}
     except Exception as e:
         logger.exception("Error during individual student check:")
-        error_msg = str(e).strip() or "Connection to board server timed out or failed. Please enable 'Test / Demo Mode' to preview."
+        error_msg = str(e).strip() or "Connection to board server timed out or failed. Please check the roll and registration numbers or try again later."
         raise HTTPException(status_code=500, detail=f"Failed to check result: {error_msg}")
 
 
@@ -276,10 +392,20 @@ async def run_extraction_task(job_id: str):
 
         results_df = pd.DataFrame(flattened_records)
 
-        # Generate exported files (Excel & CSV)
+        # Generate comprehensive result analysis
+        analysis_data = compute_result_analysis(results)
+        eiin = analysis_data.get("eiin") or resolve_institution_eiin(
+            raw_val="",
+            institute=results[0].get("Institute", "") if results else "",
+            board=board
+        )
+        job["analysis"] = analysis_data
+        job["eiin"] = eiin
+
+        # Generate exported files (Excel & CSV) with EIIN included in filenames
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        excel_filename = f"Board_Results_{exam}_{year}_{board}_{timestamp}.xlsx"
-        csv_filename = f"Board_Results_{exam}_{year}_{board}_{timestamp}.csv"
+        excel_filename = f"Board_Results_EIIN_{eiin}_{exam}_{year}_{board}_{timestamp}.xlsx"
+        csv_filename = f"Board_Results_EIIN_{eiin}_{exam}_{year}_{board}_{timestamp}.csv"
 
         excel_filepath = os.path.join(EXPORTS_DIR, f"{job_id}_{excel_filename}")
         csv_filepath = os.path.join(EXPORTS_DIR, f"{job_id}_{csv_filename}")
@@ -298,14 +424,12 @@ async def run_extraction_task(job_id: str):
                 col_letter = col[0].column_letter
                 worksheet.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 40)
 
-        # Generate comprehensive result analysis and analysis Excel
-        analysis_data = compute_result_analysis(results)
-        job["analysis"] = analysis_data
-
-        analysis_filename = f"Board_Results_Analysis_{exam}_{year}_{board}_{timestamp}.xlsx"
+        # Generate analysis Excel workbook
+        inst_name = str(analysis_data.get("institute") or "Institution").replace(":", " ").replace("/", " ").replace("\\", " ").strip()
+        analysis_filename = f"{eiin}, {inst_name} Board Result Comprehensive Analysis Report_{exam}_{year}_{board}_{timestamp}.xlsx"
         analysis_filepath = os.path.join(EXPORTS_DIR, f"{job_id}_{analysis_filename}")
 
-        meta = {"exam": exam, "year": year, "board": board}
+        meta = {"exam": exam, "year": year, "board": board, "eiin": eiin}
         analysis_stream = generate_analysis_excel_bytes(analysis_data, meta)
         with open(analysis_filepath, "wb") as f_out:
             f_out.write(analysis_stream.getvalue())
@@ -333,9 +457,12 @@ async def run_extraction_task(job_id: str):
     except Exception as e:
         logger.exception("Error during extraction task execution:")
         job["status"] = "failed"
+        err_msg = str(e).strip()
+        if not err_msg:
+            err_msg = f"{type(e).__name__}: Processing encountered an unexpected network or timeout issue."
         await queue.put({
             "type": "error",
-            "message": f"Extraction encountered an error: {str(e)}"
+            "message": f"Extraction encountered an error: {err_msg}"
         })
 
 
@@ -446,10 +573,12 @@ async def download_analysis_file(job_id: str):
         if not results:
             raise HTTPException(status_code=404, detail="No student records available for analysis.")
         analysis_data = job.get("analysis") or compute_result_analysis(results)
-        meta = {"exam": job.get("exam", ""), "year": job.get("year", ""), "board": job.get("board", "")}
+        eiin = job.get("eiin") or analysis_data.get("eiin") or resolve_institution_eiin("", analysis_data.get("institute", ""), job.get("board", ""))
+        meta = {"exam": job.get("exam", ""), "year": job.get("year", ""), "board": job.get("board", ""), "eiin": eiin}
         analysis_stream = generate_analysis_excel_bytes(analysis_data, meta)
+        inst_name = str(analysis_data.get("institute") or "Institution").replace(":", " ").replace("/", " ").replace("\\", " ").strip()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"Board_Results_Analysis_{timestamp}.xlsx"
+        filename = f"{eiin}, {inst_name} Board Result Comprehensive Analysis Report_{timestamp}.xlsx"
         path = os.path.join(EXPORTS_DIR, f"{job_id}_{filename}")
         with open(path, "wb") as f_out:
             f_out.write(analysis_stream.getvalue())
@@ -517,11 +646,13 @@ async def export_analysis_from_uploaded_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="The uploaded file contains no student rows.")
 
     analysis_data = compute_result_analysis(records)
-    meta = {"exam": "Board Result", "year": "", "board": "All"}
+    eiin = analysis_data.get("eiin") or resolve_institution_eiin("", analysis_data.get("institute", ""))
+    meta = {"exam": "Board Result", "year": "", "board": "All", "eiin": eiin}
     excel_stream = generate_analysis_excel_bytes(analysis_data, meta)
 
+    inst_name = str(analysis_data.get("institute") or "Institution").replace(":", " ").replace("/", " ").replace("\\", " ").strip()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    export_name = f"Board_Result_Analysis_{timestamp}.xlsx"
+    export_name = f"{eiin}, {inst_name} Board Result Comprehensive Analysis Report_{timestamp}.xlsx"
     return StreamingResponse(
         excel_stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

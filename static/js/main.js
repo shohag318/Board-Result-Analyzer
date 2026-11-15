@@ -20,6 +20,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const indRollInput = document.getElementById("indRoll");
     const indRegInput = document.getElementById("indReg");
     const submitIndBtn = document.getElementById("submitIndBtn");
+    const captchaContainer = document.getElementById("captchaContainer");
+    const captchaImg = document.getElementById("captchaImg");
+    const captchaSpinner = document.getElementById("captchaSpinner");
+    const refreshCaptchaBtn = document.getElementById("refreshCaptchaBtn");
+    const indCaptchaInput = document.getElementById("indCaptcha");
 
     // Marksheet Card Elements
     const individualResultCard = document.getElementById("individualResultCard");
@@ -39,6 +44,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const marksheetInstituteRow = document.getElementById("marksheetInstituteRow");
     const marksheetGradesBody = document.getElementById("marksheetGradesBody");
     const cumillaHscAlert = document.getElementById("cumillaHscAlert");
+    const eduBoardAlert = document.getElementById("eduBoardAlert");
+    const activeBoardName = document.getElementById("activeBoardName");
+    const regHelpText = document.getElementById("regHelpText");
 
     // Progress Elements (Bulk Scraping)
     const progressCard = document.getElementById("progressCard");
@@ -80,18 +88,84 @@ document.addEventListener("DOMContentLoaded", () => {
         analysisModalInstance = new bootstrap.Modal(analysisModalEl);
     }
 
-    // Dynamic Server Notice for Cumilla HSC
+    let lastCaptchaLoadTime = 0;
+
+    async function loadCaptcha(force = false) {
+        if (!captchaContainer || captchaContainer.style.display === "none") return;
+        const now = Date.now();
+        if (!force && now - lastCaptchaLoadTime < 3000) return;
+        lastCaptchaLoadTime = now;
+
+        if (captchaSpinner) captchaSpinner.style.display = "inline-block";
+        if (captchaImg) captchaImg.style.display = "none";
+        try {
+            const resp = await fetch("/api/captcha");
+            const data = await resp.json();
+            if (data.success && data.image) {
+                if (captchaImg) {
+                    captchaImg.src = data.image;
+                    captchaImg.style.display = "inline-block";
+                }
+                if (captchaSpinner) captchaSpinner.style.display = "none";
+                if (indCaptchaInput) {
+                    indCaptchaInput.value = data.predicted || "";
+                }
+            } else {
+                if (captchaSpinner) captchaSpinner.style.display = "none";
+            }
+        } catch (e) {
+            console.warn("Failed to load captcha:", e);
+            if (captchaSpinner) captchaSpinner.style.display = "none";
+        }
+    }
+
+    if (refreshCaptchaBtn) {
+        refreshCaptchaBtn.addEventListener("click", () => {
+            loadCaptcha(true);
+        });
+    }
+
+    // Dynamic Server Notice for Cumilla HSC/SSC vs National Portal
     function updateCumillaServerNotice() {
-        const isCumilla = (boardSelect.value || "").toLowerCase() === "comilla";
-        const isHsc = (examSelect.value || "").toLowerCase().includes("hsc");
-        if (isCumilla && isHsc) {
-            if (cumillaHscAlert) cumillaHscAlert.style.display = "flex";
-            indRollInput.placeholder = "e.g. 160000";
-            indRegInput.placeholder = "Optional (Not needed for Cumilla HSC)";
+        const boardVal = (boardSelect.value || "").toLowerCase();
+        const isCumilla = boardVal === "comilla" || boardVal === "cumilla";
+        const examVal = (examSelect.value || "").toLowerCase();
+        const isHsc = examVal.includes("hsc");
+        const isSsc = examVal.includes("ssc") || examVal.includes("dakhil");
+        const selectedBoardText = boardSelect.options[boardSelect.selectedIndex]?.text || "Selected Board";
+
+        if (isCumilla && (isHsc || isSsc)) {
+            const portalUrl = isSsc ? "https://result19.comillaboard.gov.bd/SSCRCBY26/individual/" : "https://hscresult.comillaboard.gov.bd/";
+            const portalDomain = isSsc ? "result19.comillaboard.gov.bd/SSCRCBY26/individual/" : "hscresult.comillaboard.gov.bd";
+            const examLabel = isSsc ? "SSC" : "HSC";
+
+            if (cumillaHscAlert) {
+                cumillaHscAlert.style.display = "flex";
+                const bannerText = document.getElementById("cumillaBannerText");
+                if (bannerText) {
+                    bannerText.innerHTML = `Connected to <a href="${portalUrl}" target="_blank" class="fw-semibold text-success text-decoration-underline">${portalDomain}</a>. Only <strong>Roll number</strong> is needed for Cumilla ${examLabel}. Registration number is not required.`;
+                }
+            }
+            if (eduBoardAlert) eduBoardAlert.style.display = "none";
+            if (captchaContainer) captchaContainer.style.display = "none";
+            indRollInput.placeholder = isSsc ? "e.g. 100000" : "e.g. 160000";
+            indRegInput.placeholder = `Optional (Not needed for Cumilla ${examLabel})`;
+            if (regHelpText) regHelpText.textContent = `Optional. For Cumilla ${examLabel}, result is found automatically with Roll only.`;
         } else {
             if (cumillaHscAlert) cumillaHscAlert.style.display = "none";
+            if (eduBoardAlert) {
+                eduBoardAlert.style.display = "flex";
+                if (activeBoardName) {
+                    activeBoardName.textContent = selectedBoardText.replace(/\(.*\)/, "").trim();
+                }
+            }
+            if (captchaContainer) {
+                captchaContainer.style.display = "block";
+                loadCaptcha();
+            }
             indRollInput.placeholder = "e.g. 100101";
-            indRegInput.placeholder = "e.g. 1512345678 (optional)";
+            indRegInput.placeholder = "e.g. 1512345678 (Registration No)";
+            if (regHelpText) regHelpText.textContent = "Registration is required for full subject-wise marksheet on national portal.";
         }
     }
 
@@ -160,7 +234,9 @@ document.addEventListener("DOMContentLoaded", () => {
         formData.append("board", boardSelect.value);
         formData.append("roll", rollVal);
         formData.append("reg", regVal);
-        formData.append("demo_mode", demoModeCheck.checked ? "true" : "false");
+        const captchaVal = indCaptchaInput ? indCaptchaInput.value.trim() : "";
+        formData.append("captcha", captchaVal);
+        formData.append("demo_mode", demoModeCheck && demoModeCheck.checked ? "true" : "false");
 
         try {
             const response = await fetch("/api/check-individual", {
@@ -175,6 +251,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const resJson = await response.json();
             const student = resJson.data;
+
+            if (student.Result === "Invalid Security Code" || student.Result === "Captcha Required") {
+                loadCaptcha(true);
+                if (indCaptchaInput) {
+                    indCaptchaInput.focus();
+                    indCaptchaInput.select();
+                }
+            }
 
             // Save in currentRecords
             currentRecords.push(student);
@@ -289,10 +373,10 @@ document.addEventListener("DOMContentLoaded", () => {
         individualResultCard.style.display = "none";
 
         submitBulkBtn.disabled = true;
-        submitBulkBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status"></span>Starting Scraping...`;
+        submitBulkBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status"></span>Processing Results...`;
 
         progressCard.style.display = "block";
-        progressTitle.textContent = "Scraping in progress...";
+        progressTitle.textContent = "Processing student results...";
         progressBar.style.width = "0%";
         progressBar.className = "progress-bar progress-bar-striped progress-bar-animated bg-primary";
         progressPercentBadge.textContent = "0%";
@@ -304,7 +388,7 @@ document.addEventListener("DOMContentLoaded", () => {
         formData.append("exam", examSelect.value);
         formData.append("year", yearSelect.value);
         formData.append("board", boardSelect.value);
-        formData.append("demo_mode", demoModeCheck.checked ? "true" : "false");
+        formData.append("demo_mode", demoModeCheck && demoModeCheck.checked ? "true" : "false");
 
         try {
             const response = await fetch("/api/start-extraction", {
@@ -369,8 +453,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 progressBar.className = "progress-bar bg-success";
                 progressPercentBadge.textContent = "100%";
                 progressPercentBadge.className = "badge bg-success rounded-pill px-3 py-2";
-                progressTitle.textContent = "Extraction Completed!";
-                statusMessage.innerHTML = `<i class="bi bi-check-circle-fill text-success me-1"></i> Successfully finished fetching ${msg.total} student records!`;
+                progressTitle.textContent = "Results Loaded Successfully!";
+                statusMessage.innerHTML = `<i class="bi bi-check-circle-fill text-success me-1"></i> Successfully loaded ${msg.total} student records!`;
 
                 // Set Download Links
                 downloadXlsxBtn.href = msg.download_xlsx;
@@ -388,7 +472,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 // Reset Submit Button
                 submitBulkBtn.disabled = false;
-                submitBulkBtn.innerHTML = `<i class="bi bi-play-circle-fill me-1"></i> Start Bulk Extraction`;
+                submitBulkBtn.innerHTML = `<i class="bi bi-play-circle-fill me-1"></i> Process Batch Results`;
 
                 eventSource.close();
 
@@ -398,7 +482,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 alert(msg.message);
 
                 submitBulkBtn.disabled = false;
-                submitBulkBtn.innerHTML = `<i class="bi bi-play-circle-fill me-1"></i> Start Bulk Extraction`;
+                submitBulkBtn.innerHTML = `<i class="bi bi-play-circle-fill me-1"></i> Process Batch Results`;
 
                 eventSource.close();
             }
@@ -447,10 +531,13 @@ document.addEventListener("DOMContentLoaded", () => {
             ? `${gradesSummary.substring(0, 48)}...` 
             : gradesSummary;
 
+        const studentBoard = data.Board || (boardSelect.options[boardSelect.selectedIndex]?.text.replace(/\(.*\)/, "").trim()) || "-";
+
         row.innerHTML = `
             <td class="ps-4 fw-bold text-dark">${data.Roll || "-"}</td>
             <td class="text-secondary">${data.Registration || "-"}</td>
             <td class="fw-medium">${data.Name || "N/A"}</td>
+            <td><span class="badge bg-light text-dark border">${studentBoard}</span></td>
             <td><span class="badge ${gpaBadgeClass} px-2 py-1 fs-7">${data.GPA || "0.00"}</span></td>
             <td>${resultBadge}</td>
             <td class="pe-4 text-muted small" title="${gradesSummary.replace(/"/g, '&quot;')}">${displayGrades}</td>
@@ -465,37 +552,70 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Open Analysis modal trigger handlers
     function openResultAnalysis() {
-        const meta = {
-            exam: examSelect ? examSelect.options[examSelect.selectedIndex].text : "HSC",
-            year: yearSelect ? yearSelect.value : "2026",
-            board: boardSelect ? boardSelect.options[boardSelect.selectedIndex].text : "Board"
-        };
+        try {
+            const meta = {
+                exam: examSelect ? (examSelect.options[examSelect.selectedIndex]?.text || "HSC") : "HSC",
+                year: yearSelect ? (yearSelect.value || "2026") : "2026",
+                board: boardSelect ? (boardSelect.options[boardSelect.selectedIndex]?.text || "Board") : "Board"
+            };
 
-        if (latestAnalysisData) {
-            displayResultAnalysis(latestAnalysisData, meta);
-            return;
-        }
+            if (latestAnalysisData) {
+                displayResultAnalysis(latestAnalysisData, meta);
+                return;
+            }
 
-        if (currentRecords.length > 0) {
-            const analysis = computeClientAnalysis(currentRecords);
-            latestAnalysisData = analysis;
-            displayResultAnalysis(analysis, meta);
-            return;
-        }
+            if (currentRecords.length > 0) {
+                const analysis = computeClientAnalysis(currentRecords);
+                latestAnalysisData = analysis;
+                displayResultAnalysis(analysis, meta);
+                return;
+            }
 
-        // If no records are present, offer user to analyze an existing file
-        const confirmUpload = confirm(
-            "No extracted results are currently loaded on this page.\n\n" +
-            "Would you like to select an existing Board Results CSV or Excel file to analyze right now?"
-        );
-        if (confirmUpload && analysisFileInput) {
-            analysisFileInput.click();
+            // If no records are present, offer user to analyze an existing file
+            const confirmUpload = confirm(
+                "No extracted results are currently loaded on this page.\n\n" +
+                "Would you like to select an existing Board Results CSV or Excel file to analyze right now?"
+            );
+            if (confirmUpload && analysisFileInput) {
+                analysisFileInput.click();
+            }
+        } catch (err) {
+            console.error("Error opening result analysis:", err);
+            alert(`Analysis Error: ${err.message}`);
         }
     }
 
     if (openAnalysisBtn) openAnalysisBtn.addEventListener("click", openResultAnalysis);
     if (headerAnalysisBtn) headerAnalysisBtn.addEventListener("click", openResultAnalysis);
     if (bottomAnalysisBtn) bottomAnalysisBtn.addEventListener("click", openResultAnalysis);
+
+    // Navbar integration
+    const navOpenAnalysisBtn = document.getElementById("navOpenAnalysisBtn");
+    const navBulkLink = document.getElementById("navBulkLink");
+    const navIndLink = document.getElementById("navIndLink");
+    if (navOpenAnalysisBtn) navOpenAnalysisBtn.addEventListener("click", openResultAnalysis);
+    if (navBulkLink) {
+        navBulkLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            const bulkTabBtn = document.getElementById("bulk-tab");
+            if (bulkTabBtn) {
+                const tab = new bootstrap.Tab(bulkTabBtn);
+                tab.show();
+            }
+            document.getElementById("modeTabs")?.scrollIntoView({ behavior: "smooth" });
+        });
+    }
+    if (navIndLink) {
+        navIndLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            const indTabBtn = document.getElementById("individual-tab");
+            if (indTabBtn) {
+                const tab = new bootstrap.Tab(indTabBtn);
+                tab.show();
+            }
+            document.getElementById("modeTabs")?.scrollIntoView({ behavior: "smooth" });
+        });
+    }
 
     if (uploadFileForAnalysisBtn) {
         uploadFileForAnalysisBtn.addEventListener("click", () => {
@@ -562,7 +682,10 @@ document.addEventListener("DOMContentLoaded", () => {
                         const url = window.URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = url;
-                        a.download = `Board_Result_Analysis_${file.name.replace(/\.[^/.]+$/, "")}.xlsx`;
+                        const fileInstDetails = getInstitutionHeaderDetails(latestAnalysisData, { exam: "Analyzed File", year: "", board: file.name });
+                        const fileEiin = fileInstDetails.eiin || "105820";
+                        const fileInst = (fileInstDetails.instituteName || "Institution").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
+                        a.download = `${fileEiin}, ${fileInst} Board Result Comprehensive Analysis Report - ${file.name.replace(/\.[^/.]+$/, "")}.xlsx`;
                         document.body.appendChild(a);
                         a.click();
                         a.remove();
@@ -633,8 +756,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (kpiGpa5ValWithout) kpiGpa5ValWithout.textContent = countWithout;
         if (kpiGpa5RateWithout) kpiGpa5RateWithout.textContent = `${rateWithout}%`;
 
+        const instDetails = getInstitutionHeaderDetails(analysisData, metaInfo);
         if (analysisMetaText) {
-            analysisMetaText.textContent = `${metaInfo.exam || "Examination"} ${metaInfo.year || ""} | ${metaInfo.board || "Board"} | ${summary.total_students || 0} Records Analyzed`;
+            analysisMetaText.textContent = `${metaInfo.exam || "Examination"} ${metaInfo.year || ""} | ${metaInfo.board || "Board"} | EIIN: ${instDetails.eiin} | ${summary.total_students || 0} Records Analyzed | ${instDetails.instituteName}`;
         }
 
         // 2. Regular vs Irregular KPI Quick Banner
@@ -678,21 +802,62 @@ document.addEventListener("DOMContentLoaded", () => {
         const badge2FailCount = document.getElementById("badge2FailCount");
         const badgeMFailCount = document.getElementById("badgeMFailCount");
         const badgeAbsentCount = document.getElementById("badgeAbsentCount");
+        const badgeMeritCount = document.getElementById("badgeMeritCount");
+        const badgeFailListCount = document.getElementById("badgeFailListCount");
 
         if (badge1FailCount) badge1FailCount.textContent = (analysisData.one_subject_fail && analysisData.one_subject_fail.total) || 0;
         if (badge2FailCount) badge2FailCount.textContent = (analysisData.two_subject_fail && analysisData.two_subject_fail.total) || 0;
         if (badgeMFailCount) badgeMFailCount.textContent = (analysisData.multi_subject_fail && analysisData.multi_subject_fail.total) || 0;
         const absentTotal = (analysisData.absent_analysis && analysisData.absent_analysis.total_absent !== undefined) ? analysisData.absent_analysis.total_absent : (summary.absent || 0);
         if (badgeAbsentCount) badgeAbsentCount.textContent = absentTotal;
+        if (badgeMeritCount) badgeMeritCount.textContent = (analysisData.merit_list && analysisData.merit_list.total) || 0;
+        if (badgeFailListCount) badgeFailListCount.textContent = (analysisData.failed_list_subject_wise && analysisData.failed_list_subject_wise.total_failed_students) || 0;
+
+        // Render Executive Failure Summary Banner
+        renderFailureSummaryExecutiveBanner(analysisData);
+
+        // Make KPI tiles clickable to jump directly to detailed failure tabs
+        if (kpi1Fail) {
+            const tile1 = kpi1Fail.closest(".metric-tile");
+            if (tile1) {
+                tile1.classList.add("clickable-tile");
+                tile1.title = "Click to view 1-Subject Fail breakdown";
+                tile1.onclick = () => {
+                    const tab1 = document.getElementById("tab-1fail");
+                    if (tab1) {
+                        bootstrap.Tab.getOrCreateInstance(tab1).show();
+                        tab1.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                    }
+                };
+            }
+        }
+        if (kpi2Fail) {
+            const tile2 = kpi2Fail.closest(".metric-tile");
+            if (tile2) {
+                tile2.classList.add("clickable-tile");
+                tile2.title = "Click to view 2-Subject Fail breakdown";
+                tile2.onclick = () => {
+                    const tab2 = document.getElementById("tab-2fail");
+                    if (tab2) {
+                        bootstrap.Tab.getOrCreateInstance(tab2).show();
+                        tab2.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                    }
+                };
+            }
+        }
 
         // Render Tabs
-        renderSubjectGradeTable(analysisData.subject_analysis || [], analysisData.available_groups || []);
-        renderRegularVsIrregular(analysisData.regular_summary || {}, analysisData.irregular_summary || {}, analysisData.types_summary || {}, analysisData.group_type_comparison || []);
+        renderSubjectGradeTableForType("ALL", "all", analysisData.subject_analysis || [], analysisData.available_groups || [], analysisData.available_boards || []);
+        renderSubjectGradeTableForType("REGULAR", "reg", analysisData.subject_analysis || [], analysisData.available_groups || [], analysisData.available_boards || []);
+        renderSubjectGradeTableForType("IRREGULAR", "irreg", analysisData.subject_analysis || [], analysisData.available_groups || [], analysisData.available_boards || []);
+        renderStudentMeritList(analysisData.merit_list || {}, analysisData.available_groups || []);
+        renderFailedListSubjectWise(analysisData.failed_list_subject_wise || {}, analysisData.available_groups || []);
         renderOneSubjectFail(analysisData.one_subject_fail || {});
         renderTwoSubjectFail(analysisData.two_subject_fail || {});
         renderMultiSubjectFail(analysisData.multi_subject_fail || {});
         renderGroupAndGpaSummary(analysisData.groups_summary || {}, analysisData.gpa_distribution || {});
         renderAbsentStudents(analysisData.absent_analysis || {});
+        renderRegularVsIrregular(analysisData.regular_summary || {}, analysisData.irregular_summary || {}, analysisData.types_summary || {}, analysisData.group_type_comparison || []);
 
         // Synchronize 4th Subject display mode
         updateGpaDisplayMode(analysisData);
@@ -701,6 +866,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (printAnalysisBtn) {
             printAnalysisBtn.onclick = () => printAnalysisReport(analysisData, metaInfo);
         }
+
+        // Setup Separate Option PDF Download Buttons
+        setupSeparateOptionPdfButtons(analysisData, metaInfo);
 
         // Show Modal
         if (analysisModalInstance) {
@@ -711,12 +879,23 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // TAB 1: Subject Wise Grade Table
-    function renderSubjectGradeTable(subjectAnalysis, availableGroups) {
-        const groupFilter = document.getElementById("analysisGroupFilter");
-        const typeFilter = document.getElementById("analysisTypeFilter");
-        const searchInput = document.getElementById("analysisSubjectSearch");
-        const tableBody = document.getElementById("subjectGradeBody");
+    // Legacy backward-compatibility alias
+    function renderSubjectGradeTable(subjectAnalysis, availableGroups, availableBoards) {
+        renderSubjectGradeTableForType("ALL", "all", subjectAnalysis, availableGroups, availableBoards);
+    }
+
+    // Reusable function for Subject Wise Grade Tables (All, Regular, Irregular)
+    function renderSubjectGradeTableForType(targetType, prefix, subjectAnalysis, availableGroups, availableBoards) {
+        const groupFilter = document.getElementById(`${prefix}SubjGroupFilter`);
+        const boardFilter = document.getElementById(`${prefix}SubjBoardFilter`);
+        const searchInput = document.getElementById(`${prefix}SubjSearch`);
+        const tableBody = document.getElementById(`${prefix}SubjectGradeBody`) || document.getElementById("subjectGradeBody");
+        const countBadge = document.getElementById(`${prefix}SubjCountBadge`);
+        const appearedBadge = document.getElementById(`${prefix}SubjAppearedBadge`);
+        const passedBadge = document.getElementById(`${prefix}SubjPassedBadge`);
+        const passRateBadge = document.getElementById(`${prefix}SubjPassRateBadge`);
+
+        if (!tableBody) return;
 
         if (groupFilter) {
             const currentVal = groupFilter.value;
@@ -730,21 +909,43 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         }
 
+        if (boardFilter) {
+            const currentBoard = boardFilter.value;
+            boardFilter.innerHTML = '<option value="ALL">All Boards</option>';
+            (availableBoards || []).forEach(b => {
+                const opt = document.createElement("option");
+                opt.value = b;
+                opt.textContent = b;
+                if (b === currentBoard) opt.selected = true;
+                boardFilter.appendChild(opt);
+            });
+        }
+
         function filterAndRender() {
             const selectedGroup = groupFilter ? groupFilter.value : "ALL";
-            const selectedType = typeFilter ? typeFilter.value : "ALL";
             const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
 
             tableBody.innerHTML = "";
 
-            const filtered = subjectAnalysis.filter(item => {
+            const filtered = (subjectAnalysis || []).filter(item => {
+                const matchType = (item.type === targetType);
+                if (!matchType) return false;
                 const matchGroup = (selectedGroup === "ALL") ? (item.group === "ALL") : (item.group === selectedGroup);
                 if (!matchGroup) return false;
-                const matchType = (selectedType === "ALL") ? (item.type === "ALL") : (item.type === selectedType);
-                if (!matchType) return false;
                 if (query && !item.subject.toLowerCase().includes(query)) return false;
                 return true;
             });
+
+            // Update KPI summary badges
+            const totalSubjs = filtered.length;
+            const totalApp = filtered.reduce((acc, it) => acc + (it.appeared || 0), 0);
+            const totalPass = filtered.reduce((acc, it) => acc + (it.passed || 0), 0);
+            const avgRate = totalApp > 0 ? (totalPass / totalApp * 100).toFixed(2) : "0.00";
+
+            if (countBadge) countBadge.textContent = totalSubjs;
+            if (appearedBadge) appearedBadge.textContent = totalApp;
+            if (passedBadge) passedBadge.textContent = totalPass;
+            if (passRateBadge) passRateBadge.textContent = `${avgRate}%`;
 
             if (filtered.length === 0) {
                 tableBody.innerHTML = `<tr><td colspan="14" class="text-center py-4 text-muted">No subject records found matching the filter.</td></tr>`;
@@ -763,7 +964,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 } else if (item.type === "IRREGULAR") {
                     typeBadge = `<span class="badge bg-warning-subtle text-dark border border-warning-subtle">IRREGULAR</span>`;
                 } else if (item.type === "ALL") {
-                    typeBadge = `<span class="badge bg-light text-muted border">ALL</span>`;
+                    typeBadge = `<span class="badge bg-light text-dark border">ALL</span>`;
                 }
 
                 tr.innerHTML = `
@@ -792,8 +993,381 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (groupFilter) groupFilter.onchange = filterAndRender;
-        if (typeFilter) typeFilter.onchange = filterAndRender;
+        if (boardFilter) boardFilter.onchange = filterAndRender;
         if (searchInput) searchInput.oninput = filterAndRender;
+        filterAndRender();
+    }
+
+    // TAB 4: Student Merit List
+    function renderStudentMeritList(meritData, availableGroups) {
+        const tableBody = document.getElementById("meritTableBody");
+        if (!tableBody) return;
+        const groupFilter = document.getElementById("meritGroupFilter");
+        const typeButtonsContainer = document.getElementById("meritTypeButtons");
+        const rankModeContainer = document.getElementById("meritRankModeButtons");
+        const searchInput = document.getElementById("meritSearch");
+        const noticeEl = document.getElementById("meritFilteredNotice");
+        const exportBtn = document.getElementById("exportMeritCsvBtn");
+
+        // Summary cards
+        const totalPassedEl = document.getElementById("meritTotalPassed");
+        const goldenCountEl = document.getElementById("meritGoldenCount");
+        const gpa5CountEl = document.getElementById("meritGpa5Count");
+        const topStudentNameEl = document.getElementById("meritTopStudentName");
+        const topStudentRollEl = document.getElementById("meritTopStudentRoll");
+
+        const students = (meritData && meritData.students) ? meritData.students : [];
+
+        if (totalPassedEl) totalPassedEl.textContent = students.length;
+        const goldenCount = students.filter(s => s.Is_GPA5_Without_4th).length;
+        const gpa5Count = students.filter(s => s.Is_GPA5_With_4th).length;
+        if (goldenCountEl) goldenCountEl.textContent = goldenCount;
+        if (gpa5CountEl) gpa5CountEl.textContent = gpa5Count;
+
+        if (students.length > 0) {
+            const top1 = students[0];
+            if (topStudentNameEl) topStudentNameEl.textContent = top1.Name;
+            if (topStudentRollEl) topStudentRollEl.textContent = `Roll: ${top1.Roll} | GPA: ${top1.GPA_With_4th}`;
+        } else {
+            if (topStudentNameEl) topStudentNameEl.textContent = "None";
+            if (topStudentRollEl) topStudentRollEl.textContent = "-";
+        }
+
+        // Group Filter
+        if (groupFilter) {
+            const currentVal = groupFilter.value;
+            groupFilter.innerHTML = '<option value="ALL">All Groups</option>';
+            (availableGroups || []).forEach(grp => {
+                const opt = document.createElement("option");
+                opt.value = grp;
+                opt.textContent = grp;
+                if (grp === currentVal) opt.selected = true;
+                groupFilter.appendChild(opt);
+            });
+        }
+
+        let activeType = "ALL";
+        let activeRankMode = "overall"; // "overall" or "group"
+
+        // Type toggle buttons
+        if (typeButtonsContainer) {
+            typeButtonsContainer.querySelectorAll("button").forEach(btn => {
+                btn.onclick = () => {
+                    activeType = btn.getAttribute("data-type") || "ALL";
+                    typeButtonsContainer.querySelectorAll("button").forEach(b => {
+                        b.classList.remove("active", "btn-dark", "btn-primary", "btn-warning");
+                        const t = b.getAttribute("data-type");
+                        if (t === "ALL") b.className = "btn btn-outline-dark";
+                        else if (t === "REGULAR") b.className = "btn btn-outline-primary";
+                        else if (t === "IRREGULAR") b.className = "btn btn-outline-warning text-dark";
+                    });
+
+                    btn.classList.add("active");
+                    if (activeType === "ALL") btn.className = "btn btn-dark active";
+                    else if (activeType === "REGULAR") btn.className = "btn btn-primary active";
+                    else if (activeType === "IRREGULAR") btn.className = "btn btn-warning text-dark active";
+
+                    filterAndRender();
+                };
+            });
+        }
+
+        // Rank mode toggle buttons
+        if (rankModeContainer) {
+            rankModeContainer.querySelectorAll("button").forEach(btn => {
+                btn.onclick = () => {
+                    activeRankMode = btn.getAttribute("data-mode") || "overall";
+                    rankModeContainer.querySelectorAll("button").forEach(b => {
+                        b.classList.remove("active", "btn-primary");
+                        b.classList.add("btn-outline-primary");
+                    });
+                    btn.classList.add("active", "btn-primary");
+                    btn.classList.remove("btn-outline-primary");
+                    filterAndRender();
+                };
+            });
+        }
+
+        let currentlyFiltered = [];
+
+        function filterAndRender() {
+            const selectedGroup = groupFilter ? groupFilter.value : "ALL";
+            const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+
+            currentlyFiltered = students.filter(st => {
+                if (selectedGroup !== "ALL" && st.Group !== selectedGroup) return false;
+                if (activeType !== "ALL" && st.Type !== activeType) return false;
+                if (query) {
+                    const str = `${st.Roll} ${st.Registration || ""} ${st.Name} ${st.Group} ${st.Type || ""}`.toLowerCase();
+                    if (!str.includes(query)) return false;
+                }
+                return true;
+            });
+
+            if (noticeEl) {
+                const groupText = selectedGroup === "ALL" ? "all groups" : selectedGroup;
+                const typeText = activeType === "ALL" ? "all types" : activeType;
+                noticeEl.textContent = `Showing ${currentlyFiltered.length} ranked students (${groupText}, ${typeText})`;
+            }
+
+            if (!tableBody) return;
+            tableBody.innerHTML = "";
+
+            if (currentlyFiltered.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-muted">No students found matching merit criteria.</td></tr>`;
+                return;
+            }
+
+            currentlyFiltered.forEach(st => {
+                const tr = document.createElement("tr");
+
+                const rankVal = (activeRankMode === "group") ? st.Group_Merit_Position : st.Merit_Position;
+                let rankBadge = `<span class="merit-rank-badge merit-rank-normal">${rankVal}</span>`;
+                if (rankVal === 1) rankBadge = `<span class="merit-rank-badge merit-rank-1" title="1st Place (Gold)">🥇 1</span>`;
+                else if (rankVal === 2) rankBadge = `<span class="merit-rank-badge merit-rank-2" title="2nd Place (Silver)">🥈 2</span>`;
+                else if (rankVal === 3) rankBadge = `<span class="merit-rank-badge merit-rank-3" title="3rd Place (Bronze)">🥉 3</span>`;
+
+                const typeBadge = st.Type === "REGULAR" 
+                    ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle">REGULAR</span>`
+                    : (st.Type === "IRREGULAR" 
+                        ? `<span class="badge bg-warning-subtle text-dark border border-warning-subtle">IRREGULAR</span>`
+                        : `<span class="badge bg-light text-secondary border">${st.Type || "OTHER"}</span>`);
+
+                const gpaWithBadge = st.Is_GPA5_With_4th 
+                    ? `<span class="badge badge-gpa-gold px-2.5 py-1.5 fs-7"><i class="bi bi-star-fill me-1"></i>${st.GPA_With_4th}</span>`
+                    : `<span class="badge bg-light text-primary border px-2.5 py-1.5 fs-7">${st.GPA_With_4th}</span>`;
+
+                const gpaWithoutBadge = st.Is_GPA5_Without_4th
+                    ? `<span class="badge bg-warning text-dark border border-warning px-2 py-1 fs-8" title="Golden A+ (Pure)"><i class="bi bi-award-fill me-1"></i>${st.GPA_Without_4th} (Golden)</span>`
+                    : `<span class="badge bg-light text-muted border px-2 py-1 fs-8">${st.GPA_Without_4th}</span>`;
+
+                const gradePills = `
+                    <span class="badge bg-warning-subtle text-dark border border-warning-subtle me-1">${st.A_Plus_Count || 0} A+</span>
+                    <span class="badge bg-success-subtle text-success border border-success-subtle me-1">${st.A_Count || 0} A</span>
+                    <span class="badge bg-info-subtle text-info border border-info-subtle">${st.A_Minus_Count || 0} A-</span>
+                `;
+
+                tr.innerHTML = `
+                    <td class="text-center">${rankBadge}</td>
+                    <td class="ps-3 fw-bold text-dark">${st.Roll}</td>
+                    <td class="text-secondary small">${st.Registration || "-"}</td>
+                    <td class="fw-semibold text-dark">${st.Name}</td>
+                    <td><span class="badge bg-light text-secondary border">${st.Group}</span></td>
+                    <td class="text-center">${typeBadge}</td>
+                    <td class="text-center">${gpaWithBadge}</td>
+                    <td class="text-center">${gpaWithoutBadge}</td>
+                    <td class="text-center">${gradePills}</td>
+                    <td class="small text-muted text-truncate" style="max-width: 250px;" title="${st.Passed_Grades_Summary}">${st.Passed_Grades_Summary}</td>
+                `;
+                tableBody.appendChild(tr);
+            });
+        }
+
+        // CSV Export for Merit List
+        if (exportBtn) {
+            exportBtn.onclick = () => {
+                if (!currentlyFiltered || currentlyFiltered.length === 0) {
+                    alert("No student records to export.");
+                    return;
+                }
+                const headers = ["Merit Rank", "Group Rank", "Roll No", "Reg No", "Student Name", "Group", "Candidate Type", "GPA (With 4th)", "GPA (Without 4th)", "A+ Count", "A Count", "Passed Subjects Detail"];
+                const rows = currentlyFiltered.map(s => [
+                    s.Merit_Position,
+                    s.Group_Merit_Position,
+                    s.Roll,
+                    s.Registration || "",
+                    `"${(s.Name || "").replace(/"/g, '""')}"`,
+                    s.Group,
+                    s.Type || "REGULAR",
+                    s.GPA_With_4th,
+                    s.GPA_Without_4th,
+                    s.A_Plus_Count || 0,
+                    s.A_Count || 0,
+                    `"${(s.Passed_Grades_Summary || "").replace(/"/g, '""')}"`
+                ]);
+                const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(r => r.join(","))].join("\r\n");
+                const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.setAttribute("href", url);
+                const meritEiin = (analysisData && (analysisData.eiin || (analysisData.summary && analysisData.summary.eiin))) || "105820";
+                link.setAttribute("download", `Student_Merit_List_EIIN_${meritEiin}_${new Date().toISOString().slice(0,10)}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+        }
+
+        if (groupFilter) groupFilter.onchange = filterAndRender;
+        if (searchInput) searchInput.oninput = filterAndRender;
+        filterAndRender();
+    }
+
+    // TAB 5: Failed List Subject Wise (Ascending Order)
+    function renderFailedListSubjectWise(failedSubjData, availableGroups) {
+        const tableBody = document.getElementById("failSubjTableBody");
+        if (!tableBody) return;
+        const pillsContainer = document.getElementById("failSubjPillsContainer");
+        const groupFilter = document.getElementById("failSubjGroupFilter");
+        const sortSelect = document.getElementById("failSubjSortOrder");
+        const typeButtonsContainer = document.getElementById("failSubjTypeButtons");
+        const searchInput = document.getElementById("failSubjSearch");
+        const totalBadge = document.getElementById("failSubjTotalBadge");
+        const noticeEl = document.getElementById("failSubjFilteredNotice");
+
+        const subjectsList = (failedSubjData && failedSubjData.subjects) ? [...failedSubjData.subjects] : [];
+        const entries = (failedSubjData && failedSubjData.entries) ? failedSubjData.entries : [];
+
+        if (totalBadge) totalBadge.textContent = `${entries.length} Subject Failure Entries`;
+
+        if (groupFilter) {
+            const currentVal = groupFilter.value;
+            groupFilter.innerHTML = '<option value="ALL">All Groups</option>';
+            (availableGroups || []).forEach(grp => {
+                const opt = document.createElement("option");
+                opt.value = grp;
+                opt.textContent = grp;
+                if (grp === currentVal) opt.selected = true;
+                groupFilter.appendChild(opt);
+            });
+        }
+
+        let activeSubject = "ALL";
+        let activeType = "ALL";
+
+        function updateSortAndPills() {
+            if (!pillsContainer) return;
+            pillsContainer.innerHTML = "";
+
+            const sortMode = sortSelect ? sortSelect.value : "name_asc";
+            const sorted = [...subjectsList];
+
+            if (sortMode === "name_asc") {
+                sorted.sort((a, b) => a.subject.localeCompare(b.subject));
+            } else if (sortMode === "count_asc") {
+                sorted.sort((a, b) => a.count - b.count || a.subject.localeCompare(b.subject));
+            } else if (sortMode === "count_desc") {
+                sorted.sort((a, b) => b.count - a.count || a.subject.localeCompare(b.subject));
+            }
+
+            const allBtn = document.createElement("button");
+            allBtn.type = "button";
+            allBtn.className = (activeSubject === "ALL") ? "btn btn-sm btn-dark filter-pill active" : "btn btn-sm btn-outline-dark filter-pill";
+            allBtn.innerHTML = `All Failed Subjects (${entries.length})`;
+            allBtn.onclick = () => {
+                activeSubject = "ALL";
+                updateSortAndPills();
+                filterAndRender();
+            };
+            pillsContainer.appendChild(allBtn);
+
+            sorted.forEach(s => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                const isAct = (activeSubject === s.subject);
+                btn.className = isAct ? "btn btn-sm btn-danger filter-pill active" : "btn btn-sm btn-outline-danger filter-pill";
+                btn.innerHTML = `${s.subject} <span class="badge ${isAct ? 'bg-light text-danger' : 'bg-danger'} ms-1">${s.count}</span>`;
+                btn.onclick = () => {
+                    activeSubject = s.subject;
+                    updateSortAndPills();
+                    filterAndRender();
+                };
+                pillsContainer.appendChild(btn);
+            });
+        }
+
+        // Type toggle buttons
+        if (typeButtonsContainer) {
+            typeButtonsContainer.querySelectorAll("button").forEach(btn => {
+                btn.onclick = () => {
+                    activeType = btn.getAttribute("data-type") || "ALL";
+                    typeButtonsContainer.querySelectorAll("button").forEach(b => {
+                        b.classList.remove("active", "btn-dark", "btn-primary", "btn-warning");
+                        const t = b.getAttribute("data-type");
+                        if (t === "ALL") b.className = "btn btn-outline-dark";
+                        else if (t === "REGULAR") b.className = "btn btn-outline-primary";
+                        else if (t === "IRREGULAR") b.className = "btn btn-outline-warning text-dark";
+                    });
+
+                    btn.classList.add("active");
+                    if (activeType === "ALL") btn.className = "btn btn-dark active";
+                    else if (activeType === "REGULAR") btn.className = "btn btn-primary active";
+                    else if (activeType === "IRREGULAR") btn.className = "btn btn-warning text-dark active";
+
+                    filterAndRender();
+                };
+            });
+        }
+
+        function filterAndRender() {
+            const selectedGroup = groupFilter ? groupFilter.value : "ALL";
+            const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+
+            const filtered = entries.filter(item => {
+                if (activeSubject !== "ALL" && item.Failed_Subject !== activeSubject) return false;
+                if (selectedGroup !== "ALL" && item.Group !== selectedGroup) return false;
+                if (activeType !== "ALL" && item.Type !== activeType) return false;
+                if (query) {
+                    const str = `${item.Failed_Subject} ${item.Roll} ${item.Registration || ""} ${item.Name} ${item.Group} ${item.Type || ""}`.toLowerCase();
+                    if (!str.includes(query)) return false;
+                }
+                return true;
+            });
+
+            if (noticeEl) {
+                const subText = activeSubject === "ALL" ? "all subjects" : activeSubject;
+                const typeText = activeType === "ALL" ? "all types" : activeType;
+                noticeEl.textContent = `Showing ${filtered.length} failed student records in ascending order (${subText}, ${typeText})`;
+            }
+
+            if (!tableBody) return;
+            tableBody.innerHTML = "";
+
+            if (filtered.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-muted">No failed records found matching criteria.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(item => {
+                const tr = document.createElement("tr");
+
+                const typeBadge = item.Type === "REGULAR" 
+                    ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle">REGULAR</span>`
+                    : (item.Type === "IRREGULAR" 
+                        ? `<span class="badge bg-warning-subtle text-dark border border-warning-subtle">IRREGULAR</span>`
+                        : `<span class="badge bg-light text-secondary border">${item.Type || "OTHER"}</span>`);
+
+                const failCountBadge = item.Failed_Count === 1
+                    ? `<span class="badge bg-warning-subtle text-dark border border-warning-subtle">1 Subject Fail</span>`
+                    : (item.Failed_Count === 2
+                        ? `<span class="badge bg-danger-subtle text-danger border border-danger-subtle">2 Subject Fail</span>`
+                        : `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">${item.Failed_Count} Subjects</span>`);
+
+                const allFailsStr = Array.isArray(item.All_Failed_Subjects) ? item.All_Failed_Subjects.join(", ") : (item.All_Failed_Subjects || "");
+
+                tr.innerHTML = `
+                    <td class="ps-3 fw-bold text-danger"><i class="bi bi-x-circle-fill me-1"></i>${item.Failed_Subject}</td>
+                    <td class="fw-bold text-dark">${item.Roll}</td>
+                    <td class="text-secondary small">${item.Registration || "-"}</td>
+                    <td class="fw-semibold text-dark">${item.Name}</td>
+                    <td><span class="badge bg-light text-secondary border">${item.Group}</span></td>
+                    <td>${typeBadge}</td>
+                    <td class="text-center">${failCountBadge}</td>
+                    <td class="small text-danger fw-semibold text-truncate" style="max-width: 200px;" title="${allFailsStr}">${allFailsStr}</td>
+                    <td class="small text-muted text-truncate" style="max-width: 250px;" title="${item.Passed_Grades_Summary}">${item.Passed_Grades_Summary}</td>
+                `;
+                tableBody.appendChild(tr);
+            });
+        }
+
+        if (sortSelect) sortSelect.onchange = () => {
+            updateSortAndPills();
+            filterAndRender();
+        };
+        if (groupFilter) groupFilter.onchange = filterAndRender;
+        if (searchInput) searchInput.oninput = filterAndRender;
+
+        updateSortAndPills();
         filterAndRender();
     }
 
@@ -898,23 +1472,208 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // TAB 2: One Subject Fail with Subject
+    // Executive Failure Summary Snapshot Banner
+    function renderFailureSummaryExecutiveBanner(analysisData) {
+        const oneFail = analysisData.one_subject_fail || {};
+        const twoFail = analysisData.two_subject_fail || {};
+
+        const banner1Total = document.getElementById("banner1FailTotal");
+        const banner1Count = document.getElementById("banner1FailCount");
+        const banner1SubjCount = document.getElementById("banner1FailSubjectCount");
+        const banner1TopList = document.getElementById("banner1FailTopList");
+        const banner1Badges = document.getElementById("banner1FailBadges");
+
+        const oneTotal = oneFail.total || 0;
+        if (banner1Total) banner1Total.textContent = `${oneTotal} Students`;
+        if (banner1Count) banner1Count.textContent = oneTotal;
+
+        const oneSubjs = Object.entries(oneFail.subjects_summary || {});
+        if (banner1SubjCount) banner1SubjCount.textContent = `${oneSubjs.length} Subjects`;
+
+        if (banner1TopList) {
+            if (oneSubjs.length > 0) {
+                const topText = oneSubjs.slice(0, 3).map(([s, c]) => `${s} (${c})`).join(", ");
+                banner1TopList.textContent = topText;
+            } else {
+                banner1TopList.textContent = "None (All Passed / No 1-Sub Failures)";
+            }
+        }
+
+        if (banner1Badges) {
+            banner1Badges.innerHTML = "";
+            oneSubjs.slice(0, 6).forEach(([subj, count]) => {
+                const b = document.createElement("span");
+                b.className = "badge bg-warning-subtle text-dark border border-warning-subtle py-1 px-2 fs-8";
+                b.innerHTML = `${subj}: <strong class="text-danger">${count}</strong>`;
+                banner1Badges.appendChild(b);
+            });
+            if (oneSubjs.length > 6) {
+                const more = document.createElement("span");
+                more.className = "badge bg-light text-muted border py-1 px-1.5 fs-8";
+                more.textContent = `+${oneSubjs.length - 6} more`;
+                banner1Badges.appendChild(more);
+            }
+        }
+
+        // 2-Subject Fail banner
+        const banner2Total = document.getElementById("banner2FailTotal");
+        const banner2Count = document.getElementById("banner2FailCount");
+        const banner2PairCount = document.getElementById("banner2FailPairCount");
+        const banner2TopList = document.getElementById("banner2FailTopList");
+        const banner2Badges = document.getElementById("banner2FailBadges");
+
+        const twoTotal = twoFail.total || 0;
+        if (banner2Total) banner2Total.textContent = `${twoTotal} Students`;
+        if (banner2Count) banner2Count.textContent = twoTotal;
+
+        const twoPairs = Object.entries(twoFail.pair_summary || {});
+        const twoSubjs = Object.entries(twoFail.subjects_summary || {});
+        if (banner2PairCount) banner2PairCount.textContent = `${twoPairs.length} Pairs`;
+
+        if (banner2TopList) {
+            if (twoPairs.length > 0) {
+                const topText = twoPairs.slice(0, 2).map(([p, c]) => `${p} (${c})`).join(" | ");
+                banner2TopList.textContent = topText;
+            } else if (twoSubjs.length > 0) {
+                banner2TopList.textContent = twoSubjs.slice(0, 3).map(([s, c]) => `${s} (${c})`).join(", ");
+            } else {
+                banner2TopList.textContent = "None";
+            }
+        }
+
+        if (banner2Badges) {
+            banner2Badges.innerHTML = "";
+            twoPairs.slice(0, 4).forEach(([pair, count]) => {
+                const b = document.createElement("span");
+                b.className = "badge bg-danger-subtle text-danger border border-danger-subtle py-1 px-2 fs-8";
+                b.innerHTML = `${pair}: <strong class="text-danger">${count}</strong>`;
+                banner2Badges.appendChild(b);
+            });
+            if (twoPairs.length > 4) {
+                const more = document.createElement("span");
+                more.className = "badge bg-light text-muted border py-1 px-1.5 fs-8";
+                more.textContent = `+${twoPairs.length - 4} more`;
+                banner2Badges.appendChild(more);
+            }
+        }
+
+        // Jump buttons
+        const btnJump1 = document.getElementById("btnJumpTo1Fail");
+        if (btnJump1) {
+            btnJump1.onclick = () => {
+                const tab1 = document.getElementById("tab-1fail");
+                if (tab1) {
+                    bootstrap.Tab.getOrCreateInstance(tab1).show();
+                    tab1.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                }
+            };
+        }
+        const btnJump2 = document.getElementById("btnJumpTo2Fail");
+        if (btnJump2) {
+            btnJump2.onclick = () => {
+                const tab2 = document.getElementById("tab-2fail");
+                if (tab2) {
+                    bootstrap.Tab.getOrCreateInstance(tab2).show();
+                    tab2.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                }
+            };
+        }
+    }
+
+    // TAB: One Subject Fail with Rich Visual Summary
     function renderOneSubjectFail(oneFailData) {
         const pillsContainer = document.getElementById("oneSubPillsContainer");
+        const cardsContainer = document.getElementById("oneSubCardsContainer");
         const tableBody = document.getElementById("oneSubTableBody");
+        if (!tableBody) return;
+
         const summaryBadge = document.getElementById("oneSubTotalSummary");
+        const statTotal = document.getElementById("oneSubStatTotal");
+        const statTopSubj = document.getElementById("oneSubStatTopSubj");
+        const statTopCount = document.getElementById("oneSubStatTopCount");
+        const statSubjCount = document.getElementById("oneSubStatSubjCount");
+        const statTypeSplit = document.getElementById("oneSubStatTypeSplit");
         const noticeEl = document.getElementById("oneSubFilteredNotice");
         const searchInput = document.getElementById("oneSubSearch");
         const typeButtonsContainer = document.getElementById("oneSubTypeButtons");
+        const resetBtn = document.getElementById("oneSubResetFilterBtn");
 
         const total = oneFailData.total || 0;
         if (summaryBadge) summaryBadge.textContent = `${total} Total Students`;
+        if (statTotal) statTotal.textContent = total;
 
         let activeSubject = "ALL";
         let activeType = "ALL";
         const students = oneFailData.students || [];
 
-        // Build interactive filter pills
+        // Candidate Split
+        const regCount = students.filter(s => s.Type === "REGULAR").length;
+        const irregCount = students.length - regCount;
+        if (statTypeSplit) statTypeSplit.textContent = `${regCount} Reg / ${irregCount} Irreg`;
+
+        const subjsEntries = Object.entries(oneFailData.subjects_summary || {});
+        if (statSubjCount) statSubjCount.textContent = `${subjsEntries.length} Subjects`;
+
+        if (subjsEntries.length > 0) {
+            const [topS, topC] = subjsEntries[0];
+            const topPct = total > 0 ? ((topC / total) * 100).toFixed(1) : 0;
+            if (statTopSubj) {
+                statTopSubj.textContent = topS;
+                statTopSubj.title = topS;
+            }
+            if (statTopCount) statTopCount.textContent = `${topC} Students (${topPct}%)`;
+        } else {
+            if (statTopSubj) statTopSubj.textContent = "None";
+            if (statTopCount) statTopCount.textContent = "0 Students";
+        }
+
+        // Render Summary Cards: "How Many Students Failed One Subject and Which Subject"
+        if (cardsContainer) {
+            cardsContainer.innerHTML = "";
+            if (subjsEntries.length === 0) {
+                cardsContainer.innerHTML = `<div class="col-12"><div class="p-3 text-center text-muted small bg-light rounded-3">No students failed in only 1 subject.</div></div>`;
+            } else {
+                subjsEntries.forEach(([subj, count]) => {
+                    const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
+                    const subjReg = students.filter(s => s.Failed_Subject === subj && s.Type === "REGULAR").length;
+                    const subjIrreg = count - subjReg;
+
+                    const col = document.createElement("div");
+                    col.className = "col-sm-6 col-md-4 col-lg-3 flex-fill";
+
+                    const card = document.createElement("div");
+                    card.className = "p-2.5 rounded-3 subject-fail-card h-100 shadow-xs";
+                    card.setAttribute("data-subject", subj);
+                    card.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-start gap-1 mb-1.5">
+                            <span class="fw-bold text-dark text-truncate small" title="${subj}">${subj}</span>
+                            <span class="badge bg-danger rounded-pill px-2 py-0.5 fw-bold fs-8">${count} Failed</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center text-muted mb-1 fs-8">
+                            <span>Share: <strong class="text-dark">${pct}%</strong></span>
+                            <span class="text-secondary">${subjReg} Reg / ${subjIrreg} Irreg</span>
+                        </div>
+                        <div class="progress" style="height: 5px; background-color: #f1f5f9;">
+                            <div class="progress-bar bg-danger" role="progressbar" style="width: ${Math.max(parseFloat(pct), 6)}%;" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                        <div class="text-end mt-1.5">
+                            <span class="text-primary small fw-semibold fs-8"><i class="bi bi-funnel me-1"></i>Filter Students →</span>
+                        </div>
+                    `;
+
+                    card.onclick = () => {
+                        activeSubject = (activeSubject === subj) ? "ALL" : subj;
+                        updatePillsAndCards();
+                        filterAndRender();
+                    };
+
+                    col.appendChild(card);
+                    cardsContainer.appendChild(col);
+                });
+            }
+        }
+
+        // Render Filter Pills
         if (pillsContainer) {
             pillsContainer.innerHTML = "";
             const allBtn = document.createElement("button");
@@ -923,41 +1682,63 @@ document.addEventListener("DOMContentLoaded", () => {
             allBtn.innerHTML = `All Subjects (${total})`;
             allBtn.onclick = () => {
                 activeSubject = "ALL";
-                updatePills();
+                updatePillsAndCards();
                 filterAndRender();
             };
             pillsContainer.appendChild(allBtn);
 
-            Object.entries(oneFailData.subjects_summary || {}).forEach(([subj, count]) => {
+            subjsEntries.forEach(([subj, count]) => {
                 const btn = document.createElement("button");
                 btn.type = "button";
                 btn.className = "btn btn-sm btn-outline-danger filter-pill";
                 btn.innerHTML = `${subj} <span class="badge bg-danger ms-1">${count}</span>`;
                 btn.onclick = () => {
                     activeSubject = subj;
-                    updatePills();
+                    updatePillsAndCards();
                     filterAndRender();
                 };
                 pillsContainer.appendChild(btn);
             });
         }
 
-        function updatePills() {
-            if (!pillsContainer) return;
-            pillsContainer.querySelectorAll(".filter-pill").forEach(btn => {
-                if (activeSubject === "ALL" && btn.textContent.startsWith("All Subjects")) {
-                    btn.className = "btn btn-sm btn-dark filter-pill active";
-                } else if (btn.textContent.startsWith(activeSubject)) {
-                    btn.className = "btn btn-sm btn-danger filter-pill active";
-                } else {
-                    btn.className = btn.textContent.startsWith("All Subjects") 
-                        ? "btn btn-sm btn-outline-dark filter-pill" 
-                        : "btn btn-sm btn-outline-danger filter-pill";
-                }
-            });
+        if (resetBtn) {
+            resetBtn.onclick = () => {
+                activeSubject = "ALL";
+                updatePillsAndCards();
+                filterAndRender();
+            };
         }
 
-        // Setup candidate type toggle buttons
+        function updatePillsAndCards() {
+            // Update cards active border
+            if (cardsContainer) {
+                cardsContainer.querySelectorAll(".subject-fail-card").forEach(card => {
+                    const s = card.getAttribute("data-subject");
+                    if (activeSubject !== "ALL" && s === activeSubject) {
+                        card.classList.add("active-filter");
+                    } else {
+                        card.classList.remove("active-filter");
+                    }
+                });
+            }
+
+            // Update pills
+            if (pillsContainer) {
+                pillsContainer.querySelectorAll(".filter-pill").forEach(btn => {
+                    if (activeSubject === "ALL" && btn.textContent.startsWith("All Subjects")) {
+                        btn.className = "btn btn-sm btn-dark filter-pill active";
+                    } else if (btn.textContent.startsWith(activeSubject)) {
+                        btn.className = "btn btn-sm btn-danger filter-pill active";
+                    } else {
+                        btn.className = btn.textContent.startsWith("All Subjects")
+                            ? "btn btn-sm btn-outline-dark filter-pill"
+                            : "btn btn-sm btn-outline-danger filter-pill";
+                    }
+                });
+            }
+        }
+
+        // Candidate type toggle buttons
         if (typeButtonsContainer) {
             typeButtonsContainer.querySelectorAll("button").forEach(btn => {
                 btn.onclick = () => {
@@ -999,6 +1780,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 noticeEl.textContent = `Showing ${filtered.length} students (${subText}, ${typeText})`;
             }
 
+            if (!tableBody) return;
             tableBody.innerHTML = "";
             if (filtered.length === 0) {
                 tableBody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">No students found matching criteria.</td></tr>`;
@@ -1015,39 +1797,150 @@ document.addEventListener("DOMContentLoaded", () => {
                 const tr = document.createElement("tr");
                 tr.innerHTML = `
                     <td class="ps-3 fw-bold text-dark">${st.Roll}</td>
-                    <td class="text-secondary small">${st.Registration || "-"}</td>
+                    <td class="text-secondary small font-monospace">${st.Registration || "-"}</td>
                     <td class="fw-semibold">${st.Name}</td>
                     <td><span class="badge bg-light text-dark border">${st.Group}</span></td>
                     <td>${typeBadge}</td>
                     <td><span class="badge bg-danger px-2 py-1 fs-7"><i class="bi bi-x-circle me-1"></i>${st.Failed_Subject} (F)</span></td>
                     <td class="small text-muted" title="${st.Passed_Grades_Summary}">${st.Passed_Grades_Summary}</td>
-                    <td class="text-center"><span class="badge bg-success-subtle text-success border border-success-subtle">Eligible for Improvement</span></td>
+                    <td class="text-center"><span class="badge bg-success-subtle text-success border border-success-subtle">Eligible for Retake</span></td>
                 `;
                 tableBody.appendChild(tr);
             });
         }
 
         if (searchInput) searchInput.oninput = filterAndRender;
+        updatePillsAndCards();
         filterAndRender();
     }
 
-    // TAB 3: Two Subject Fail with Subject
+    // TAB: Two Subject Fail with Rich Visual Summary
     function renderTwoSubjectFail(twoFailData) {
         const pillsContainer = document.getElementById("twoSubPillsContainer");
+        const freqContainer = document.getElementById("twoSubSubjectFreqContainer");
+        const pairsContainer = document.getElementById("twoSubPairsContainer");
         const tableBody = document.getElementById("twoSubTableBody");
+        if (!tableBody) return;
+
         const summaryBadge = document.getElementById("twoSubTotalSummary");
+        const statTotal = document.getElementById("twoSubStatTotal");
+        const statTopSubj = document.getElementById("twoSubStatTopSubj");
+        const statTopCount = document.getElementById("twoSubStatTopCount");
+        const statTopPair = document.getElementById("twoSubStatTopPair");
+        const statTopPairCount = document.getElementById("twoSubStatTopPairCount");
+        const statTypeSplit = document.getElementById("twoSubStatTypeSplit");
         const noticeEl = document.getElementById("twoSubFilteredNotice");
         const searchInput = document.getElementById("twoSubSearch");
         const typeButtonsContainer = document.getElementById("twoSubTypeButtons");
+        const resetBtn = document.getElementById("twoSubResetFilterBtn");
 
         const total = twoFailData.total || 0;
         if (summaryBadge) summaryBadge.textContent = `${total} Total Students`;
+        if (statTotal) statTotal.textContent = total;
 
         let activeSubject = "ALL";
+        let activePair = "ALL";
         let activeType = "ALL";
         const students = twoFailData.students || [];
 
-        // Build interactive pills
+        // Candidate split
+        const regCount = students.filter(s => s.Type === "REGULAR").length;
+        const irregCount = students.length - regCount;
+        if (statTypeSplit) statTypeSplit.textContent = `${regCount} Reg / ${irregCount} Irreg`;
+
+        const subjsEntries = Object.entries(twoFailData.subjects_summary || {});
+        const pairsEntries = Object.entries(twoFailData.pair_summary || {});
+
+        // Top Subject
+        if (subjsEntries.length > 0) {
+            const [topS, topC] = subjsEntries[0];
+            if (statTopSubj) {
+                statTopSubj.textContent = topS;
+                statTopSubj.title = topS;
+            }
+            if (statTopCount) statTopCount.textContent = `${topC} Occurrences`;
+        } else {
+            if (statTopSubj) statTopSubj.textContent = "None";
+            if (statTopCount) statTopCount.textContent = "0 Occurrences";
+        }
+
+        // Top Pair
+        if (pairsEntries.length > 0) {
+            const [topP, topPC] = pairsEntries[0];
+            const pairPct = total > 0 ? ((topPC / total) * 100).toFixed(1) : 0;
+            if (statTopPair) {
+                statTopPair.textContent = topP;
+                statTopPair.title = topP;
+            }
+            if (statTopPairCount) statTopPairCount.textContent = `${topPC} Students (${pairPct}%)`;
+        } else {
+            if (statTopPair) statTopPair.textContent = "None";
+            if (statTopPairCount) statTopPairCount.textContent = "0 Students";
+        }
+
+        // Render Subject Frequency List
+        if (freqContainer) {
+            freqContainer.innerHTML = "";
+            if (subjsEntries.length === 0) {
+                freqContainer.innerHTML = `<div class="text-muted small text-center p-2">No 2-subject fail records.</div>`;
+            } else {
+                subjsEntries.forEach(([subj, count]) => {
+                    const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
+                    const item = document.createElement("div");
+                    item.className = "two-sub-summary-item";
+                    item.setAttribute("data-subject", subj);
+                    item.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="fw-bold small text-dark text-truncate" title="${subj}">${subj}</span>
+                            <span class="badge bg-danger rounded-pill px-2 py-0.5 fs-8">${count} fails (${pct}%)</span>
+                        </div>
+                        <div class="progress" style="height: 4px; background-color: #f1f5f9;">
+                            <div class="progress-bar bg-danger" role="progressbar" style="width: ${Math.max(parseFloat(pct), 6)}%;"></div>
+                        </div>
+                    `;
+                    item.onclick = () => {
+                        activePair = "ALL";
+                        activeSubject = (activeSubject === subj) ? "ALL" : subj;
+                        updateActiveHighlights();
+                        filterAndRender();
+                    };
+                    freqContainer.appendChild(item);
+                });
+            }
+        }
+
+        // Render Pair Combinations List
+        if (pairsContainer) {
+            pairsContainer.innerHTML = "";
+            if (pairsEntries.length === 0) {
+                pairsContainer.innerHTML = `<div class="text-muted small text-center p-2">No pair combinations found.</div>`;
+            } else {
+                pairsEntries.forEach(([pair, count]) => {
+                    const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
+                    const item = document.createElement("div");
+                    item.className = "two-sub-summary-item";
+                    item.setAttribute("data-pair", pair);
+                    item.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="fw-bold small text-dark text-truncate" title="${pair}"><i class="bi bi-intersect me-1 text-danger"></i>${pair}</span>
+                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill px-2 py-0.5 fs-8">${count} (${pct}%)</span>
+                        </div>
+                        <div class="progress" style="height: 4px; background-color: #f1f5f9;">
+                            <div class="progress-bar bg-danger" role="progressbar" style="width: ${Math.max(parseFloat(pct), 6)}%;"></div>
+                        </div>
+                    `;
+                    item.onclick = () => {
+                        activeSubject = "ALL";
+                        activePair = (activePair === pair) ? "ALL" : pair;
+                        updateActiveHighlights();
+                        filterAndRender();
+                    };
+                    pairsContainer.appendChild(item);
+                });
+            }
+        }
+
+        // Render Filter Pills
         if (pillsContainer) {
             pillsContainer.innerHTML = "";
             const allBtn = document.createElement("button");
@@ -1056,41 +1949,78 @@ document.addEventListener("DOMContentLoaded", () => {
             allBtn.innerHTML = `All Two-Subject Fails (${total})`;
             allBtn.onclick = () => {
                 activeSubject = "ALL";
-                updatePills();
+                activePair = "ALL";
+                updateActiveHighlights();
                 filterAndRender();
             };
             pillsContainer.appendChild(allBtn);
 
-            Object.entries(twoFailData.subjects_summary || {}).forEach(([subj, count]) => {
+            subjsEntries.forEach(([subj, count]) => {
                 const btn = document.createElement("button");
                 btn.type = "button";
                 btn.className = "btn btn-sm btn-outline-danger filter-pill";
                 btn.innerHTML = `${subj} <span class="badge bg-danger ms-1">${count}</span>`;
                 btn.onclick = () => {
+                    activePair = "ALL";
                     activeSubject = subj;
-                    updatePills();
+                    updateActiveHighlights();
                     filterAndRender();
                 };
                 pillsContainer.appendChild(btn);
             });
         }
 
-        function updatePills() {
-            if (!pillsContainer) return;
-            pillsContainer.querySelectorAll(".filter-pill").forEach(btn => {
-                if (activeSubject === "ALL" && btn.textContent.startsWith("All Two-Subject")) {
-                    btn.className = "btn btn-sm btn-dark filter-pill active";
-                } else if (btn.textContent.startsWith(activeSubject)) {
-                    btn.className = "btn btn-sm btn-danger filter-pill active";
-                } else {
-                    btn.className = btn.textContent.startsWith("All Two-Subject") 
-                        ? "btn btn-sm btn-outline-dark filter-pill" 
-                        : "btn btn-sm btn-outline-danger filter-pill";
-                }
-            });
+        if (resetBtn) {
+            resetBtn.onclick = () => {
+                activeSubject = "ALL";
+                activePair = "ALL";
+                updateActiveHighlights();
+                filterAndRender();
+            };
         }
 
-        // Setup candidate type toggle buttons
+        function updateActiveHighlights() {
+            // Update pills
+            if (pillsContainer) {
+                pillsContainer.querySelectorAll(".filter-pill").forEach(btn => {
+                    if (activeSubject === "ALL" && activePair === "ALL" && btn.textContent.startsWith("All Two-Subject")) {
+                        btn.className = "btn btn-sm btn-dark filter-pill active";
+                    } else if (activeSubject !== "ALL" && btn.textContent.startsWith(activeSubject)) {
+                        btn.className = "btn btn-sm btn-danger filter-pill active";
+                    } else {
+                        btn.className = btn.textContent.startsWith("All Two-Subject")
+                            ? "btn btn-sm btn-outline-dark filter-pill"
+                            : "btn btn-sm btn-outline-danger filter-pill";
+                    }
+                });
+            }
+
+            // Update subject freq highlights
+            if (freqContainer) {
+                freqContainer.querySelectorAll(".two-sub-summary-item").forEach(item => {
+                    const s = item.getAttribute("data-subject");
+                    if (activeSubject !== "ALL" && s === activeSubject) {
+                        item.classList.add("active-filter");
+                    } else {
+                        item.classList.remove("active-filter");
+                    }
+                });
+            }
+
+            // Update pair highlights
+            if (pairsContainer) {
+                pairsContainer.querySelectorAll(".two-sub-summary-item").forEach(item => {
+                    const p = item.getAttribute("data-pair");
+                    if (activePair !== "ALL" && p === activePair) {
+                        item.classList.add("active-filter");
+                    } else {
+                        item.classList.remove("active-filter");
+                    }
+                });
+            }
+        }
+
+        // Candidate type toggle buttons
         if (typeButtonsContainer) {
             typeButtonsContainer.querySelectorAll("button").forEach(btn => {
                 btn.onclick = () => {
@@ -1119,6 +2049,12 @@ document.addEventListener("DOMContentLoaded", () => {
             const filtered = students.filter(st => {
                 const fails = st.Failed_Subjects || [];
                 if (activeSubject !== "ALL" && !fails.includes(activeSubject)) return false;
+                if (activePair !== "ALL") {
+                    const pairParts = activePair.split("&").map(s => s.trim());
+                    if (pairParts.length === 2 && (!fails.includes(pairParts[0]) || !fails.includes(pairParts[1]))) {
+                        return false;
+                    }
+                }
                 if (activeType !== "ALL" && st.Type !== activeType) return false;
                 if (query) {
                     const text = `${st.Roll} ${st.Registration || ""} ${st.Name} ${st.Group} ${st.Type || ""} ${fails.join(" ")}`.toLowerCase();
@@ -1128,11 +2064,12 @@ document.addEventListener("DOMContentLoaded", () => {
             });
 
             if (noticeEl) {
-                const subText = activeSubject === "ALL" ? "all subjects" : activeSubject;
+                const subText = activePair !== "ALL" ? activePair : (activeSubject === "ALL" ? "all subjects" : activeSubject);
                 const typeText = activeType === "ALL" ? "all types" : activeType;
                 noticeEl.textContent = `Showing ${filtered.length} students (${subText}, ${typeText})`;
             }
 
+            if (!tableBody) return;
             tableBody.innerHTML = "";
             if (filtered.length === 0) {
                 tableBody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-muted">No students found matching criteria.</td></tr>`;
@@ -1153,7 +2090,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const tr = document.createElement("tr");
                 tr.innerHTML = `
                     <td class="ps-3 fw-bold text-dark">${st.Roll}</td>
-                    <td class="text-secondary small">${st.Registration || "-"}</td>
+                    <td class="text-secondary small font-monospace">${st.Registration || "-"}</td>
                     <td class="fw-semibold">${st.Name}</td>
                     <td><span class="badge bg-light text-dark border">${st.Group}</span></td>
                     <td>${typeBadge}</td>
@@ -1168,6 +2105,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (searchInput) searchInput.oninput = filterAndRender;
+        updateActiveHighlights();
         filterAndRender();
     }
 
@@ -1462,6 +2400,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const twoFailStudents = [];
         const multiFailStudents = [];
         const absentStudents = [];
+        const meritCandidates = [];
+        const allFailedStudents = [];
         const oneSubFreq = {};
         const twoSubFreq = {};
         const subjectStats = {};
@@ -1514,8 +2454,12 @@ document.addEventListener("DOMContentLoaded", () => {
             let gpaNum = parseFloat(raw.GPA || 0) || 0.0;
 
             const subjectGrades = {};
-            if (raw.Subject_Grades && typeof raw.Subject_Grades === "object") {
-                Object.entries(raw.Subject_Grades).forEach(([k, v]) => {
+            let rawSubj = raw.Subject_Grades;
+            if (typeof rawSubj === "string" && rawSubj.trim().startsWith("{")) {
+                try { rawSubj = JSON.parse(rawSubj); } catch (e) {}
+            }
+            if (rawSubj && typeof rawSubj === "object") {
+                Object.entries(rawSubj).forEach(([k, v]) => {
                     const g = String(v).trim().toUpperCase();
                     if (validGrades.includes(g)) subjectGrades[k.trim()] = g;
                 });
@@ -1644,6 +2588,55 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (!typeStudents[cType]) typeStudents[cType] = [];
             typeStudents[cType].push(stInfo);
+
+            if (isPassed) {
+                const aPlusCnt = Object.values(subjectGrades).filter(g => g === "A+").length;
+                const aCnt = Object.values(subjectGrades).filter(g => g === "A").length;
+                const aMinusCnt = Object.values(subjectGrades).filter(g => g === "A-").length;
+                const bCnt = Object.values(subjectGrades).filter(g => g === "B").length;
+                const cCnt = Object.values(subjectGrades).filter(g => g === "C").length;
+                const dCnt = Object.values(subjectGrades).filter(g => g === "D").length;
+
+                meritCandidates.push({
+                    Roll: roll,
+                    Registration: reg,
+                    Name: name,
+                    "Father Name": father,
+                    Institute: institute,
+                    Group: group,
+                    Type: cType,
+                    GPA: gpaWith4th.toFixed(2),
+                    GPA_With_4th: gpaWith4th.toFixed(2),
+                    GPA_Without_4th: gpaWithout4th.toFixed(2),
+                    GPA_With_4th_Numeric: gpaWith4th,
+                    GPA_Without_4th_Numeric: gpaWithout4th,
+                    Is_GPA5_With_4th: isGpa5With,
+                    Is_GPA5_Without_4th: isGpa5Without,
+                    A_Plus_Count: aPlusCnt,
+                    A_Count: aCnt,
+                    A_Minus_Count: aMinusCnt,
+                    B_Count: bCnt,
+                    C_Count: cCnt,
+                    D_Count: dCnt,
+                    Subject_Grades: subjectGrades,
+                    Passed_Grades_Summary: passedSubjs.join(", ") || "-"
+                });
+            }
+
+            if (failCnt > 0) {
+                allFailedStudents.push({
+                    Roll: roll,
+                    Registration: reg,
+                    Name: name,
+                    "Father Name": father,
+                    Institute: institute,
+                    Group: group,
+                    Type: cType,
+                    Failed_Count: failCnt,
+                    Failed_Subjects: mainFailed,
+                    Passed_Grades_Summary: passedSubjs.join(", ") || "-"
+                });
+            }
 
             // Fail categories
             if (failCnt === 1) {
@@ -1871,6 +2864,61 @@ document.addEventListener("DOMContentLoaded", () => {
             students: absentStudents
         };
 
+        // Build Student Merit List
+        meritCandidates.sort((a, b) => {
+            if (b.GPA_With_4th_Numeric !== a.GPA_With_4th_Numeric) return b.GPA_With_4th_Numeric - a.GPA_With_4th_Numeric;
+            if (b.GPA_Without_4th_Numeric !== a.GPA_Without_4th_Numeric) return b.GPA_Without_4th_Numeric - a.GPA_Without_4th_Numeric;
+            if (b.A_Plus_Count !== a.A_Plus_Count) return b.A_Plus_Count - a.A_Plus_Count;
+            if (b.A_Count !== a.A_Count) return b.A_Count - a.A_Count;
+            const rollA = parseInt(a.Roll, 10) || 99999999;
+            const rollB = parseInt(b.Roll, 10) || 99999999;
+            return rollA - rollB;
+        });
+
+        const groupRankCounters = {};
+        meritCandidates.forEach((st, idx) => {
+            st.Merit_Position = idx + 1;
+            groupRankCounters[st.Group] = (groupRankCounters[st.Group] || 0) + 1;
+            st.Group_Merit_Position = groupRankCounters[st.Group];
+        });
+
+        // Build Failed List Subject Wise (Ascending Order)
+        const subjFailMap = {};
+        allFailedStudents.forEach(st => {
+            (st.Failed_Subjects || []).forEach(subj => {
+                if (!subjFailMap[subj]) subjFailMap[subj] = [];
+                subjFailMap[subj].push(st);
+            });
+        });
+
+        const sortedFailSubjs = Object.keys(subjFailMap).sort((a, b) => a.localeCompare(b));
+        const failedSubjectsSummary = [];
+        const flatFailedEntries = [];
+
+        sortedFailSubjs.forEach(subj => {
+            const list = subjFailMap[subj].sort((a, b) => (parseInt(a.Roll, 10) || 0) - (parseInt(b.Roll, 10) || 0));
+            failedSubjectsSummary.push({
+                subject: subj,
+                count: list.length,
+                regular_count: list.filter(s => s.Type === "REGULAR").length,
+                irregular_count: list.filter(s => s.Type === "IRREGULAR").length,
+                students: list
+            });
+            list.forEach(s => {
+                flatFailedEntries.push({
+                    Failed_Subject: subj,
+                    Roll: s.Roll,
+                    Registration: s.Registration,
+                    Name: s.Name,
+                    Group: s.Group,
+                    Type: s.Type,
+                    Failed_Count: s.Failed_Count,
+                    All_Failed_Subjects: s.Failed_Subjects,
+                    Passed_Grades_Summary: s.Passed_Grades_Summary
+                });
+            });
+        });
+
         return {
             total_students: totalStudents,
             summary: {
@@ -1898,6 +2946,16 @@ document.addEventListener("DOMContentLoaded", () => {
             irregular_summary: irregularSummary,
             group_type_comparison: groupTypeComparison,
             subject_analysis: subjectAnalysis,
+            merit_list: {
+                total: meritCandidates.length,
+                students: meritCandidates
+            },
+            failed_list_subject_wise: {
+                total_failed_students: allFailedStudents.length,
+                total_subject_failures: flatFailedEntries.length,
+                subjects: failedSubjectsSummary,
+                entries: flatFailedEntries
+            },
             one_subject_fail: {
                 total: oneFailStudents.length,
                 subjects_summary: Object.fromEntries(Object.entries(oneSubFreq).sort((a, b) => b[1] - a[1])),
@@ -1917,13 +2975,161 @@ document.addEventListener("DOMContentLoaded", () => {
             gpa_distribution_with_4th: gpaDistWith4th,
             gpa_distribution_without_4th: gpaDistWithout4th,
             available_groups: Object.keys(groupStudents).sort(),
-            available_types: Object.keys(typeStudents).sort()
+            available_types: Object.keys(typeStudents).sort(),
+            available_boards: []
+        };
+    }
+
+    // ==========================================
+    // INSTITUTION DETAILS RESOLVER (NAME, ADDRESS, EIIN)
+    // ==========================================
+    function getInstitutionHeaderDetails(analysisData, metaInfo) {
+        let rawInstitute = "";
+        if (analysisData && analysisData.institute) {
+            rawInstitute = analysisData.institute;
+        } else if (analysisData && analysisData.summary && analysisData.summary.institute) {
+            rawInstitute = analysisData.summary.institute;
+        } else if (metaInfo && metaInfo.institute) {
+            rawInstitute = metaInfo.institute;
+        } else if (analysisData && analysisData.merit_list && analysisData.merit_list.students && analysisData.merit_list.students.length > 0) {
+            const found = analysisData.merit_list.students.find(s => s.Institute && s.Institute !== "-" && s.Institute !== "N/A" && s.Institute !== "nan");
+            if (found) rawInstitute = found.Institute;
+        } else if (analysisData && analysisData.one_subject_fail && analysisData.one_subject_fail.students && analysisData.one_subject_fail.students.length > 0) {
+            const found = analysisData.one_subject_fail.students.find(s => s.Institute && s.Institute !== "-" && s.Institute !== "N/A" && s.Institute !== "nan");
+            if (found) rawInstitute = found.Institute;
+        }
+
+        const boardName = (metaInfo && metaInfo.board) ? metaInfo.board : (analysisData && analysisData.summary && analysisData.summary.board) || "Cumilla";
+        const cleanBoard = boardName.replace(/\s*\(Fast Server\)/i, "").replace(/\s*\(.*\)/, "").trim() || "Board";
+
+        let instituteName = "";
+        let eiin = (analysisData && (analysisData.eiin || (analysisData.summary && analysisData.summary.eiin))) || (metaInfo && metaInfo.eiin) || "";
+        let address = "";
+
+        const bdDistricts = [
+            "Bagerhat", "Bandarban", "Barguna", "Barishal", "Barisal", "Bhola", "Bogra", "Bogura", "Brahmanbaria", 
+            "Chandpur", "Chattogram", "Chittagong", "Chuadanga", "Comilla", "Cumilla", "Cox's Bazar", 
+            "Dhaka", "Dinajpur", "Faridpur", "Feni", "Gaibandha", "Gazipur", "Gopalganj", 
+            "Habiganj", "Jamalpur", "Jashore", "Jessore", "Jhalokati", "Jhenaidah", "Joypurhat", 
+            "Khagrachhari", "Khulna", "Kishoreganj", "Kurigram", "Kushtia", "Lakshmipur", "Laxmipur", 
+            "Lalmonirhat", "Madaripur", "Magura", "Manikganj", "Meherpur", "Moulvibazar", "Munshiganj", 
+            "Mymensingh", "Naogaon", "Narail", "Narayanganj", "Narsingdi", "Natore", "Netrokona", 
+            "Nilphamari", "Noakhali", "Pabna", "Panchagarh", "Patuakhali", "Pirojpur", "Rajbari", 
+            "Rajshahi", "Rangamati", "Rangpur", "Satkhira", "Shariatpur", "Sherpur", "Sirajganj", 
+            "Sunamganj", "Sylhet", "Tangail", "Thakurgaon"
+        ];
+
+        if (rawInstitute && rawInstitute.trim()) {
+            const str = rawInstitute.trim();
+            const eiinMatch = str.match(/\(?\b(\d{5,7})\b\)?/);
+            if (eiinMatch) {
+                if (!eiin) eiin = eiinMatch[1];
+                instituteName = str.replace(/\(?\b\d{5,7}\b\)?/g, "").replace(/[-()]/g, " ").replace(/\s+/g, " ").trim();
+            } else {
+                instituteName = str;
+            }
+
+            let detectedDistrict = "";
+            for (const dist of bdDistricts) {
+                const regex = new RegExp(`\\b${dist}\\b`, "i");
+                if (regex.test(str)) {
+                    detectedDistrict = dist;
+                    break;
+                }
+            }
+
+            if (detectedDistrict) {
+                address = `${detectedDistrict}, Bangladesh`;
+            } else {
+                const bLow = cleanBoard.toLowerCase();
+                if (bLow.includes("cumilla") || bLow.includes("comilla")) {
+                    address = "Kotbari Road, Cumilla Sadar, Cumilla, Bangladesh";
+                } else if (bLow.includes("dhaka")) {
+                    address = "Dhaka - 1205, Bangladesh";
+                } else {
+                    address = `${cleanBoard} Education Board Region, Bangladesh`;
+                }
+            }
+        } else {
+            instituteName = `${cleanBoard} Academic Institution`;
+            address = `${cleanBoard}, Bangladesh`;
+        }
+
+        // Deep fallback resolution for EIIN from student records
+        if (!eiin && analysisData) {
+            const studentLists = [
+                analysisData.merit_list?.students,
+                analysisData.one_subject_fail?.students,
+                analysisData.two_subject_fail?.students,
+                analysisData.absent_analysis?.students
+            ];
+            for (const list of studentLists) {
+                if (Array.isArray(list) && list.length > 0) {
+                    const st = list.find(s => s && (s.EIIN || s.eiin));
+                    if (st) {
+                        eiin = (st.EIIN || st.eiin).toString().trim();
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Fallback from sessionStorage if populated from previous search
+        if (!eiin) {
+            try {
+                eiin = sessionStorage.getItem("last_eiin") || sessionStorage.getItem("eiin") || "";
+            } catch(e) {}
+        }
+
+        // Known institute mapping
+        const knownEiins = {
+            "DALTA": "105820",
+            "BANDERHAT": "107386",
+            "CUMILLA GOVT": "105820",
+            "COMILLA GOVT": "105820",
+            "DHAKA CITY": "107977",
+            "NOTRE DAME": "108274",
+            "RAJUK": "108573",
+            "ADAMJEE": "107845",
+            "VIQARUNNISA": "108348",
+            "HOLY CROSS": "108272",
+            "CHITTAGONG COLLEGE": "133008",
+            "SCIENCE COLLEGE": "108035",
+            "MOHAMMADPUR": "132140"
+        };
+        const searchTarget = ((instituteName || "") + " " + (rawInstitute || "")).toUpperCase();
+        if (!eiin) {
+            for (const [k, v] of Object.entries(knownEiins)) {
+                if (searchTarget.includes(k)) {
+                    eiin = v;
+                    break;
+                }
+            }
+        }
+
+        // Board standard default
+        if (!eiin) {
+            const bLow = cleanBoard.toLowerCase();
+            if (bLow.includes("cumilla") || bLow.includes("comilla")) {
+                eiin = "105820";
+            } else if (bLow.includes("dhaka")) {
+                eiin = "107977";
+            } else {
+                eiin = "105820";
+            }
+        }
+
+        return {
+            instituteName: instituteName || `${cleanBoard} Academic Institution`,
+            eiin: eiin || "105820",
+            address: address || `${cleanBoard}, Bangladesh`
         };
     }
 
     // Print Report in a formatted new window
     function printAnalysisReport(analysisData, metaInfo) {
         const printWin = window.open("", "_blank");
+        const instDetails = getInstitutionHeaderDetails(analysisData, metaInfo);
         if (!printWin) {
             alert("Please allow popups to open the print layout.");
             return;
@@ -1938,18 +3144,160 @@ document.addEventListener("DOMContentLoaded", () => {
         const twoFail = analysisData.two_subject_fail || {};
         const mFail = analysisData.multi_subject_fail || {};
         const groupType = analysisData.group_type_comparison || [];
+        const meritData = analysisData.merit_list || {};
+        const failSubjData = analysisData.failed_list_subject_wise || {};
 
         const gpa5WithCount = (summary.gpa_5_count_with_4th !== undefined) ? summary.gpa_5_count_with_4th : (summary.gpa_5_count || 0);
         const gpa5WithRate = (summary.gpa_5_rate_with_4th !== undefined) ? summary.gpa_5_rate_with_4th : (summary.gpa_5_rate || 0);
         const gpa5WithoutCount = (summary.gpa_5_count_without_4th !== undefined) ? summary.gpa_5_count_without_4th : 0;
         const gpa5WithoutRate = (summary.gpa_5_rate_without_4th !== undefined) ? summary.gpa_5_rate_without_4th : 0;
 
+        // Categorize Subject Analysis into distinct sections
+        const subjList = analysisData.subject_analysis || [];
+        const allCandidatesSubjs = subjList.filter(it => it.group === "ALL" && it.type === "ALL");
+        const regularSubjs = subjList.filter(it => it.group === "ALL" && it.type === "REGULAR");
+        const irregularSubjs = subjList.filter(it => it.group === "ALL" && it.type === "IRREGULAR");
+        const improvementSubjs = subjList.filter(it => it.group === "ALL" && it.type === "IMPROVEMENT");
+        const bizStudiesSubjs = subjList.filter(it => (it.group || "").toUpperCase() === "BUSINESS STUDIES" && it.type === "ALL");
+        const humanitiesSubjs = subjList.filter(it => (it.group || "").toUpperCase() === "HUMANITIES" && it.type === "ALL");
+        const scienceSubjs = subjList.filter(it => (it.group || "").toUpperCase() === "SCIENCE" && it.type === "ALL");
+
+        const standardGroups = ["ALL", "BUSINESS STUDIES", "HUMANITIES", "SCIENCE"];
+        const otherGroupsList = (analysisData.available_groups || []).filter(g => !standardGroups.includes(g.toUpperCase()));
+
+        const failTables = (analysisData.subject_fail_tables && Object.keys(analysisData.subject_fail_tables).length > 0)
+            ? analysisData.subject_fail_tables
+            : (analysisData.fail_tables || {});
+        const availableGroups = analysisData.available_groups || Object.keys(analysisData.groups_summary || {});
+
+        function renderMainPrintFailTable(scopeTitle, categoryTitle, subjDict) {
+            const entries = Object.entries(subjDict || {});
+            let rows = "";
+            let totReg = 0, totIrreg = 0, totAll = 0;
+            if (entries.length === 0) {
+                rows = `<tr>
+                    <td style="border: 1px solid #000; padding: 3px 6px; text-align: left; color: #64748b; font-style: italic; padding-left: 8px;">No failures recorded</td>
+                    <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #64748b;">0</td>
+                    <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #64748b;">0</td>
+                    <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #64748b;">0</td>
+                </tr>`;
+            } else {
+                entries.forEach(([s, item]) => {
+                    const reg = (item && typeof item === "object") ? (item.regular || 0) : item;
+                    const irreg = (item && typeof item === "object") ? (item.irregular || 0) : 0;
+                    const tot = (item && typeof item === "object") ? (item.total || (reg + irreg)) : item;
+                    totReg += reg; totIrreg += irreg; totAll += tot;
+
+                    rows += `<tr>
+                        <td style="border: 1px solid #000; padding: 3px 6px; text-align: left; font-weight: 600; color: #0f172a; padding-left: 8px;">${s}</td>
+                        <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #1d4ed8; font-weight: 600;">${reg}</td>
+                        <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #b45309; font-weight: 600;">${irreg}</td>
+                        <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; font-weight: 700; color: #b91c1c;">${tot}</td>
+                    </tr>`;
+                });
+            }
+
+            return `
+                <div class="fail-main-card" style="page-break-inside: avoid; break-inside: avoid; width: 100%; box-sizing: border-box;">
+                    <table class="table-fail-clean" style="width: 100% !important; border: 1.5px solid #000 !important; border-collapse: collapse !important; font-size: 8.5pt !important; margin-bottom: 0 !important; background-color: #ffffff !important; font-family: Calibri, Arial, sans-serif !important;">
+                        <thead>
+                            <tr style="background-color: #f1f5f9;">
+                                <th colspan="4" class="fail-main-scope-header" style="border: 1px solid #000 !important; padding: 4px 6px !important; text-align: center !important; font-weight: 700 !important; font-size: 9.5pt !important; color: #0f172a !important; background-color: #f1f5f9 !important; text-transform: none !important; letter-spacing: normal !important;">${scopeTitle}</th>
+                            </tr>
+                            <tr style="background-color: #ffffff;">
+                                <th colspan="4" class="fail-main-cat-header" style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: center !important; font-weight: 600 !important; font-size: 8pt !important; color: #334155 !important; background-color: #ffffff !important; text-transform: none !important; letter-spacing: normal !important;">${categoryTitle}</th>
+                            </tr>
+                            <tr style="background-color: #f8fafc;">
+                                <th class="fail-main-col-header" style="border: 1px solid #000 !important; border-bottom: 1.5px solid #000 !important; width: 44%; text-align: left !important; padding: 3px 6px !important; padding-left: 8px !important; font-weight: 700 !important; font-size: 8pt !important; color: #0f172a !important; background-color: #f8fafc !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Subject</th>
+                                <th class="fail-main-col-header" style="border: 1px solid #000 !important; border-bottom: 1.5px solid #000 !important; width: 18%; text-align: center !important; padding: 3px 6px !important; font-weight: 700 !important; font-size: 8pt !important; color: #0f172a !important; background-color: #f8fafc !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Regular</th>
+                                <th class="fail-main-col-header" style="border: 1px solid #000 !important; border-bottom: 1.5px solid #000 !important; width: 18%; text-align: center !important; padding: 3px 6px !important; font-weight: 700 !important; font-size: 8pt !important; color: #0f172a !important; background-color: #f8fafc !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Irregular</th>
+                                <th class="fail-main-col-header" style="border: 1px solid #000 !important; border-bottom: 1.5px solid #000 !important; width: 20%; text-align: center !important; padding: 3px 6px !important; font-weight: 700 !important; font-size: 8pt !important; color: #0f172a !important; background-color: #f8fafc !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows}
+                            <tr style="background-color: #f8fafc; font-weight: 700; border-top: 1.5px solid #000;">
+                                <td style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: left !important; padding-left: 8px !important; font-weight: 700; background-color: #f8fafc;">Total</td>
+                                <td style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: center !important; color: #1d4ed8; font-weight: 700; background-color: #f8fafc;">${totReg}</td>
+                                <td style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: center !important; color: #b45309; font-weight: 700; background-color: #f8fafc;">${totIrreg}</td>
+                                <td style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: center !important; color: #b91c1c; font-weight: 700; background-color: #f8fafc;">${totAll}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        function renderReportSubjTable(items, subTitle, badgeText, badgeClass, desc) {
+            if (!items || items.length === 0) return "";
+            const totApp = items.reduce((a, b) => a + (b.appeared || 0), 0);
+            const totPass = items.reduce((a, b) => a + (b.passed || 0), 0);
+            const totFail = items.reduce((a, b) => a + (b.failed || 0), 0);
+            const passRate = totApp > 0 ? ((totPass / totApp) * 100).toFixed(2) : "0.00";
+
+            return `
+                <div class="report-subsection mb-3" style="page-break-inside: avoid; margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #0f172a; padding-bottom: 4px; margin-bottom: 6px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span class="badge ${badgeClass}" style="font-size: 10px; padding: 3px 8px; font-weight: 700; text-transform: uppercase;">${badgeText}</span>
+                            <strong style="font-size: 11.5px; color: #0f172a; text-transform: uppercase; letter-spacing: 0.03em;">${subTitle}</strong>
+                        </div>
+                        <div style="font-size: 10px; color: #475569;">
+                            Subjects: <strong>${items.length}</strong> | Appeared: <strong>${totApp}</strong> | Passed: <strong style="color: #16a34a;">${totPass}</strong> | Failed: <strong style="color: #dc2626;">${totFail}</strong> | Pass Rate: <strong style="color: #2563eb;">${passRate}%</strong>
+                        </div>
+                    </div>
+                    ${desc ? `<div style="font-size: 9.5px; color: #64748b; margin-bottom: 6px;">${desc}</div>` : ""}
+                    <table class="table table-bordered table-sm text-center mb-2" style="font-size: 9.5px;">
+                        <thead>
+                            <tr style="background-color: #f8fafc;">
+                                <th class="text-start ps-2" style="width: 220px;">Subject Code & Name</th>
+                                <th style="width: 60px;">Appeared</th>
+                                <th style="width: 55px;">Passed</th>
+                                <th style="width: 55px;">Failed</th>
+                                <th style="width: 65px;">Pass %</th>
+                                <th class="table-highlight-gold" style="width: 42px;">A+</th>
+                                <th style="width: 42px;">A</th>
+                                <th style="width: 42px;">A-</th>
+                                <th style="width: 42px;">B</th>
+                                <th style="width: 42px;">C</th>
+                                <th style="width: 42px;">D</th>
+                                <th class="table-highlight-red" style="width: 55px;">F (Fail)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${items.map(it => `
+                                <tr>
+                                    <td class="text-start ps-2 fw-semibold text-dark">${it.subject}</td>
+                                    <td class="fw-semibold">${it.appeared}</td>
+                                    <td class="text-success fw-bold">${it.passed}</td>
+                                    <td class="${it.failed > 0 ? 'text-danger fw-bold table-highlight-red' : 'text-muted'}">${it.failed}</td>
+                                    <td class="fw-bold ${parseFloat(it.pass_rate) >= 80 ? 'text-success' : (parseFloat(it.pass_rate) < 50 ? 'text-danger' : 'text-primary')}">${it.pass_rate}%</td>
+                                    <td class="fw-bold text-warning ${(it.grades['A+'] || 0) > 0 ? 'table-highlight-gold' : ''}">${it.grades["A+"] || 0}</td>
+                                    <td>${it.grades["A"] || 0}</td>
+                                    <td>${it.grades["A-"] || 0}</td>
+                                    <td>${it.grades["B"] || 0}</td>
+                                    <td>${it.grades["C"] || 0}</td>
+                                    <td>${it.grades["D"] || 0}</td>
+                                    <td class="${(it.grades['F'] || 0) > 0 ? 'text-danger fw-bold table-highlight-red' : 'text-muted'}">${it.grades["F"] || 0}</td>
+                                </tr>
+                            `).join("")}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        const examLabel = [metaInfo && metaInfo.exam ? metaInfo.exam : "Analyzed File", metaInfo && metaInfo.year ? metaInfo.year : ""].filter(Boolean).join(" ").trim();
+        const cleanInstName = (instDetails.instituteName || "Institution").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
+        const eiinVal = instDetails.eiin || "EIIN";
+        const saveReportTitle = `${eiinVal}, ${cleanInstName} Board Result Comprehensive Analysis Report - ${examLabel}`;
+
         const html = `
         <!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
-            <title>Board Result Comprehensive Analysis Report - ${metaInfo.exam || "HSC"} ${metaInfo.year || ""}</title>
+            <title>${saveReportTitle}</title>
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
             <style>
@@ -2065,6 +3413,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 .table-highlight-gold { background-color: #fef3c7 !important; font-weight: 700; color: #92400e; }
                 .table-highlight-red { background-color: #fee2e2 !important; font-weight: 700; color: #b91c1c; }
                 .table-highlight-green { background-color: #dcfce7 !important; font-weight: 700; color: #15803d; }
+                .table-fail-clean th.fail-main-scope-header { background-color: #f1f5f9 !important; color: #0f172a !important; }
+                .table-fail-clean th.fail-main-cat-header { background-color: #ffffff !important; color: #334155 !important; }
+                .table-fail-clean th.fail-main-col-header { background-color: #f8fafc !important; color: #0f172a !important; }
+                .fail-main-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; align-items: start; }
+                @media print {
+                    .fail-main-grid { display: grid !important; grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+                }
                 .guide-box {
                     background-color: #f0fdf4;
                     border: 1px solid #bbf7d0;
@@ -2112,16 +3467,27 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
 
             <div class="report-container">
+                <!-- Official Institutional Header Section -->
+                <div class="institution-header text-center mb-3 pb-2 border-bottom border-2 border-dark" style="page-break-inside: avoid;">
+                    <h2 style="font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px;">
+                        ${instDetails.instituteName}
+                    </h2>
+                    <div style="font-size: 11px; color: #334155; font-weight: 600; display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap;">
+                        <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Address:</strong> ${instDetails.address}</span>
+                        <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN:</strong> <span style="font-family: monospace; font-size: 12px; font-weight: 800; background: #e2e8f0; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; color: #0f172a;">${instDetails.eiin}</span></span>
+                        <span><i class="bi bi-award-fill text-success me-1"></i><strong>Board:</strong> ${(metaInfo.board || "Board").replace(/\s*\(Fast Server\)/i, "").trim()}</span>
+                    </div>
+                </div>
                 <!-- Document Header -->
                 <div class="report-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div>
                         <div class="badge-pill-custom bg-dark text-white mb-1">
-                            <i class="bi bi-shield-check text-warning me-1"></i> OFFICIAL EDUCATION BOARD RESULT AUDIT
+                            <i class="bi bi-award-fill text-warning me-1"></i> ACADEMIC EVALUATION & RESULT REPORT
                         </div>
                         <h3 class="fw-bold text-dark mb-0" style="letter-spacing: -0.5px;">INSTITUTION RESULT PERFORMANCE REPORT</h3>
                         <div class="text-muted small mt-1">
                             <strong>Exam:</strong> ${metaInfo.exam || "Examination"} ${metaInfo.year || ""} &bull; 
-                            <strong>Board:</strong> ${metaInfo.board || "Cumilla (Fast Server)"} &bull; 
+                            <strong>Board:</strong> ${(metaInfo.board || "Board").replace(/\s*\(Fast Server\)/i, "").trim()} &bull; 
                             <strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })} at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                     </div>
@@ -2406,58 +3772,178 @@ document.addEventListener("DOMContentLoaded", () => {
                     </table>
                 </div>
 
-                <!-- SECTION 4: SUBJECT WISE GRADE ANALYSIS -->
+                <!-- SECTION 4: SUBJECT WISE GRADE ANALYSIS WITH SEPARATE SECTIONS -->
                 <div class="report-section">
                     <div class="section-title">
                         <i class="bi bi-book-half text-primary"></i> 4. SUBJECT WISE GRADE ANALYSIS
                     </div>
-                    <div class="section-desc">Complete breakdown of every subject showing student attendance, pass rate, and full grade distribution (A+ down to F).</div>
+                    <div class="section-desc">Comprehensive subject-level evaluation and grade distributions organized into dedicated sections for Candidate Categories (All, Regular, Irregular, Improvement) and Academic Disciplines (Business Studies, Humanities, Science).</div>
+
+                    <!-- 4.1 All Candidates -->
+                    ${renderReportSubjTable(
+                        allCandidatesSubjs.length > 0 ? allCandidatesSubjs : subjList.filter(it => it.type === "ALL"),
+                        "4.1 All Candidates (Overall All Subjects Combined)",
+                        "ALL CANDIDATES",
+                        "bg-dark text-white",
+                        "Combined performance of all examinees across every subject in the institution."
+                    )}
+
+                    <!-- 4.2 Regular Candidates -->
+                    ${renderReportSubjTable(
+                        regularSubjs,
+                        "4.2 Regular Candidates - Subject Performance",
+                        "REGULAR",
+                        "bg-primary text-white",
+                        "Subject grade distribution for regular school/college candidates."
+                    )}
+
+                    <!-- 4.3 Irregular Candidates -->
+                    ${renderReportSubjTable(
+                        irregularSubjs,
+                        "4.3 Irregular Candidates - Subject Performance",
+                        "IRREGULAR",
+                        "bg-warning text-dark",
+                        "Subject grade breakdown and audit for irregular candidates sitting for board examinations."
+                    )}
+
+                    <!-- 4.4 Improvement Candidates -->
+                    ${improvementSubjs.length > 0 ? renderReportSubjTable(
+                        improvementSubjs,
+                        "4.4 Improvement Candidates - Subject Performance",
+                        "IMPROVEMENT",
+                        "bg-info text-white",
+                        "Subject performance for candidates sitting for GPA improvement."
+                    ) : ""}
+
+                    <!-- 4.5 Business Studies Stream -->
+                    ${renderReportSubjTable(
+                        bizStudiesSubjs,
+                        "4.5 Business Studies Stream - Subject Performance",
+                        "BUSINESS STUDIES",
+                        "bg-success text-white",
+                        "Detailed grade distribution for core and elective subjects in the Business Studies discipline."
+                    )}
+
+                    <!-- 4.6 Humanities Stream -->
+                    ${renderReportSubjTable(
+                        humanitiesSubjs,
+                        "4.6 Humanities Stream - Subject Performance",
+                        "HUMANITIES",
+                        "bg-secondary text-white",
+                        "Detailed grade distribution for core and elective subjects in the Humanities / Arts discipline."
+                    )}
+
+                    <!-- 4.7 Science Stream -->
+                    ${renderReportSubjTable(
+                        scienceSubjs,
+                        "4.7 Science Stream - Subject Performance",
+                        "SCIENCE",
+                        "bg-primary text-white",
+                        "Detailed grade distribution for core and elective subjects in the Science discipline."
+                    )}
+
+                    <!-- Other Streams (if any) -->
+                    ${otherGroupsList.map((grpName, gIdx) => {
+                        const grpSubjs = subjList.filter(it => it.group.toUpperCase() === grpName.toUpperCase() && it.type === "ALL");
+                        return renderReportSubjTable(
+                            grpSubjs,
+                            `4.${8 + gIdx} ${grpName} Stream - Subject Performance`,
+                            grpName,
+                            "bg-dark text-white",
+                            `Subject performance for ${grpName} group.`
+                        );
+                    }).join("")}
+                </div>
+
+                <!-- SECTION 5: STUDENT MERIT LIST -->
+                <div class="report-section">
+                    <div class="section-title">
+                        <i class="bi bi-trophy-fill text-warning"></i> 5. STUDENT MERIT LIST (ACADEMIC RANKING - TOTAL PASSED: ${(meritData.students || []).length})
+                    </div>
+                    <div class="section-desc">Students ranked in descending order of GPA (With 4th), Pure GPA (Without 4th), and grade distribution.</div>
+                    ${(meritData.students || []).length > 0 ? `
                     <table class="table table-bordered table-sm text-center">
                         <thead>
                             <tr>
-                                <th class="text-start ps-2">Subject Name</th>
-                                <th>Group</th>
-                                <th>Type</th>
-                                <th>Attended</th>
-                                <th>Passed</th>
-                                <th>Failed</th>
-                                <th>Pass %</th>
-                                <th class="table-highlight-gold">A+</th>
-                                <th>A</th>
-                                <th>A-</th>
-                                <th>B</th>
-                                <th>C</th>
-                                <th>D</th>
-                                <th class="table-highlight-red">F (Fail)</th>
+                                <th style="width: 55px;">Rank</th>
+                                <th style="width: 75px;">Roll No</th>
+                                <th style="width: 85px;">Reg No</th>
+                                <th class="text-start ps-2">Student Name</th>
+                                <th style="width: 85px;">Group</th>
+                                <th style="width: 75px;">Type</th>
+                                <th style="width: 85px;">GPA (With 4th)</th>
+                                <th style="width: 85px;">GPA (Pure)</th>
+                                <th style="width: 100px;">Grades Brief</th>
+                                <th class="text-start ps-2">Passed Subjects Summary</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${(analysisData.subject_analysis || []).map(item => `
+                            ${(meritData.students || []).map(st => `
                                 <tr>
-                                    <td class="text-start ps-2 fw-bold text-dark">${item.subject}</td>
-                                    <td><span class="badge bg-light text-secondary border">${item.group}</span></td>
-                                    <td><span class="badge bg-light text-dark border">${item.type || "ALL"}</span></td>
-                                    <td>${item.appeared}</td>
-                                    <td class="text-success fw-bold">${item.passed}</td>
-                                    <td class="${item.failed > 0 ? 'text-danger fw-bold' : 'text-muted'}">${item.failed}</td>
-                                    <td class="fw-bold ${item.pass_rate >= 80 ? 'text-success' : (item.pass_rate < 50 ? 'text-danger' : 'text-primary')}">${item.pass_rate}%</td>
-                                    <td class="fw-bold text-warning">${item.grades["A+"] || 0}</td>
-                                    <td>${item.grades["A"] || 0}</td>
-                                    <td>${item.grades["A-"] || 0}</td>
-                                    <td>${item.grades["B"] || 0}</td>
-                                    <td>${item.grades["C"] || 0}</td>
-                                    <td>${item.grades["D"] || 0}</td>
-                                    <td class="${item.grades["F"] > 0 ? 'table-highlight-red' : 'text-muted'}">${item.grades["F"] || 0}</td>
+                                    <td class="fw-bold ${st.Merit_Position <= 3 ? 'table-highlight-gold' : ''}">${st.Merit_Position}</td>
+                                    <td class="fw-bold">${st.Roll}</td>
+                                    <td class="font-monospace text-muted">${st.Registration || "-"}</td>
+                                    <td class="text-start ps-2 fw-semibold text-dark">${st.Name}</td>
+                                    <td><span class="badge bg-light text-secondary border">${st.Group}</span></td>
+                                    <td><span class="badge ${st.Type === 'REGULAR' ? 'bg-primary-subtle text-primary border' : 'bg-warning-subtle text-dark border'}">${st.Type || "REGULAR"}</span></td>
+                                    <td class="fw-bold ${st.Is_GPA5_With_4th ? 'table-highlight-gold' : 'text-primary'}">${st.GPA_With_4th}</td>
+                                    <td class="fw-semibold ${st.Is_GPA5_Without_4th ? 'text-success fw-bold' : 'text-muted'}">${st.GPA_Without_4th}</td>
+                                    <td class="small">${st.A_Plus_Count || 0} A+, ${st.A_Count || 0} A</td>
+                                    <td class="text-start ps-2 small text-muted text-truncate" style="max-width: 220px;">${st.Passed_Grades_Summary || "-"}</td>
                                 </tr>
                             `).join("")}
                         </tbody>
-                    </table>
+                    </table>` : `<p class="text-muted fst-italic">No passed students to rank.</p>`}
                 </div>
 
-                <!-- SECTION 5: ONE SUBJECT FAIL STUDENTS -->
+                <!-- SECTION 6: FAIL ANALYSIS (WITHOUT 4TH SUBJECT - ALL & GROUP-WISE) -->
+                <div class="report-section" style="page-break-inside: auto; break-inside: auto;">
+                    <div class="section-title">
+                        <i class="bi bi-pie-chart-fill text-danger"></i> 6. FAIL ANALYSIS (WITHOUT 4TH SUBJECT) - REGULAR & IRREGULAR BREAKDOWN
+                    </div>
+                    <div class="section-desc">Official 4-column failure tables showing failed subjects with Regular, Irregular, and Total student breakdown across All Candidates and Academic Groups (strictly excluding the 4th/optional subject).</div>
+
+                    <!-- 6.1 One Subject Fail Tables -->
+                    <div style="page-break-inside: avoid; break-inside: avoid; margin-bottom: 16px;">
+                        <div style="background-color: #0f172a; color: #ffffff; padding: 5px 12px; border-radius: 4px 4px 0 0; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; display: flex; justify-content: space-between; align-items: center;">
+                            <span>6.1 One Subject Fail (Without 4th Subject)</span>
+                            <span style="background: #334155; padding: 2px 8px; border-radius: 3px; font-size: 8.5px;">All & Group Breakdown</span>
+                        </div>
+                        <div class="fail-main-grid" style="border: 1.5px solid #000; border-top: none; padding: 8px; background-color: #f8fafc; border-radius: 0 0 4px 4px;">
+                            ${renderMainPrintFailTable("All", "One Subject Fail (Without 4th Subject)", failTables.one_subject_fail?.all || {})}
+                            ${availableGroups.map(grp => renderMainPrintFailTable(`Group: ${grp}`, "One Subject Fail (Without 4th Subject)", failTables.one_subject_fail?.by_group?.[grp] || {})).join("")}
+                        </div>
+                    </div>
+
+                    <!-- 6.2 Two Subject Fail Tables -->
+                    <div style="page-break-inside: avoid; break-inside: avoid; margin-bottom: 16px;">
+                        <div style="background-color: #0f172a; color: #ffffff; padding: 5px 12px; border-radius: 4px 4px 0 0; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; display: flex; justify-content: space-between; align-items: center;">
+                            <span>6.2 Two Subject Fail (Without 4th Subject)</span>
+                            <span style="background: #334155; padding: 2px 8px; border-radius: 3px; font-size: 8.5px;">All & Group Breakdown</span>
+                        </div>
+                        <div class="fail-main-grid" style="border: 1.5px solid #000; border-top: none; padding: 8px; background-color: #f8fafc; border-radius: 0 0 4px 4px;">
+                            ${renderMainPrintFailTable("All", "Two Subject Fail (Without 4th Subject)", failTables.two_subject_fail?.all || {})}
+                            ${availableGroups.map(grp => renderMainPrintFailTable(`Group: ${grp}`, "Two Subject Fail (Without 4th Subject)", failTables.two_subject_fail?.by_group?.[grp] || {})).join("")}
+                        </div>
+                    </div>
+
+                    <!-- 6.3 Three or More Subject Fail Tables -->
+                    <div style="page-break-inside: avoid; break-inside: avoid; margin-bottom: 16px;">
+                        <div style="background-color: #0f172a; color: #ffffff; padding: 5px 12px; border-radius: 4px 4px 0 0; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; display: flex; justify-content: space-between; align-items: center;">
+                            <span>6.3 Three or More Subject Fail (Without 4th Subject)</span>
+                            <span style="background: #334155; padding: 2px 8px; border-radius: 3px; font-size: 8.5px;">All & Group Breakdown</span>
+                        </div>
+                        <div class="fail-main-grid" style="border: 1.5px solid #000; border-top: none; padding: 8px; background-color: #f8fafc; border-radius: 0 0 4px 4px;">
+                            ${renderMainPrintFailTable("All", "Three or More Subject Fail (Without 4th Subject)", failTables.three_plus_subject_fail?.all || {})}
+                            ${availableGroups.map(grp => renderMainPrintFailTable(`Group: ${grp}`, "Three or More Subject Fail (Without 4th Subject)", failTables.three_plus_subject_fail?.by_group?.[grp] || {})).join("")}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SECTION 7: ONE SUBJECT FAIL STUDENTS -->
                 <div class="report-section">
                     <div class="section-title">
-                        <i class="bi bi-exclamation-octagon-fill text-warning"></i> 5. One Subject Fail - Supplementary Eligible Students (Total: ${oneFail.total || 0})
+                        <i class="bi bi-exclamation-octagon-fill text-warning"></i> 7. One Subject Fail - Supplementary Eligible Students (Total: ${oneFail.total || 0})
                     </div>
                     <div class="section-desc">These students failed in only ONE subject. Remedial coaching and supplementary examination will allow them to pass easily.</div>
                     ${(oneFail.students || []).length > 0 ? `
@@ -2489,10 +3975,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     </table>` : `<p class="text-muted fst-italic">No students failed in only one subject.</p>`}
                 </div>
 
-                <!-- SECTION 6: TWO SUBJECT FAIL STUDENTS -->
+                <!-- SECTION 8: TWO SUBJECT FAIL STUDENTS -->
                 <div class="report-section">
                     <div class="section-title">
-                        <i class="bi bi-exclamation-triangle-fill text-danger"></i> 6. Two Subject Fail Students (Total: ${twoFail.total || 0})
+                        <i class="bi bi-exclamation-triangle-fill text-danger"></i> 8. Two Subject Fail Students (Total: ${twoFail.total || 0})
                     </div>
                     <div class="section-desc">Students who failed in exactly two subjects and require intervention in these specific subjects.</div>
                     ${(twoFail.students || []).length > 0 ? `
@@ -2524,11 +4010,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     </table>` : `<p class="text-muted fst-italic">No students failed in two subjects.</p>`}
                 </div>
 
-                <!-- SECTION 7: 3+ SUBJECT FAIL STUDENTS (IF ANY) -->
+                <!-- SECTION 9: 3+ SUBJECT FAIL STUDENTS (IF ANY) -->
                 ${(mFail.students || []).length > 0 ? `
                 <div class="report-section">
                     <div class="section-title">
-                        <i class="bi bi-x-circle-fill text-secondary"></i> 7. Multi-Subject Fail Students (3+ Subjects) - Total: ${mFail.total || 0}
+                        <i class="bi bi-x-circle-fill text-secondary"></i> 9. Multi-Subject Fail Students (3+ Subjects) - Total: ${mFail.total || 0}
                     </div>
                     <table class="table table-bordered table-sm">
                         <thead>
@@ -2558,10 +4044,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     </table>
                 </div>` : ""}
 
-                <!-- SECTION 8: ABSENT CANDIDATES ANALYSIS & ROSTER -->
+                <!-- SECTION 10: ABSENT CANDIDATES ANALYSIS & ROSTER -->
                 <div class="report-section">
                     <div class="section-title">
-                        <i class="bi bi-person-x-fill text-secondary"></i> 8. Absent Candidates Roster (Did Not Sit for Exam) - Total: ${absentData.total_absent || summary.absent || 0}
+                        <i class="bi bi-person-x-fill text-secondary"></i> 10. Absent Candidates Roster (Did Not Sit for Exam) - Total: ${absentData.total_absent || summary.absent || 0}
                     </div>
                     <div class="section-desc">Registered candidates who were absent during the examination.</div>
                     
@@ -2637,5 +4123,1041 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
         printWin.document.write(html);
         printWin.document.close();
+    }
+
+    // ==========================================
+    // SEPARATE PDF DOWNLOAD FUNCTIONALITY FOR EVERY OPTION
+    // ==========================================
+
+    function setupSeparateOptionPdfButtons(analysisData, metaInfo) {
+        const optionButtons = [
+            { id: "pdfBtnSubjAll", opt: "subj_all" },
+            { id: "pdfBtnSubjReg", opt: "subj_reg" },
+            { id: "pdfBtnSubjIrreg", opt: "subj_irreg" },
+            { id: "pdfBtnMerit", opt: "merit" },
+            { id: "pdfBtn1Fail", opt: "1fail" },
+            { id: "pdfBtn2Fail", opt: "2fail" },
+            { id: "pdfBtnMFail", opt: "mfail" },
+            { id: "pdfBtnAbsent", opt: "absent" },
+            { id: "pdfBtnSummary", opt: "summary" },
+            { id: "pdfBtnRegIrreg", opt: "reg_irreg" }
+        ];
+
+        optionButtons.forEach(b => {
+            const btnEl = document.getElementById(b.id);
+            if (btnEl) {
+                btnEl.onclick = (e) => {
+                    e.preventDefault();
+                    downloadOptionPdf(b.opt, analysisData, metaInfo);
+                };
+            }
+        });
+    }
+
+    // Generic PDF Report Window Generator (A4, print-optimized with instant Save as PDF)
+    function generatePdfReportWindow(title, subtitle, metaInfo, kpiCards, contentHtml, noteText = "") {
+        const printWin = window.open("", "_blank");
+        const instDetails = getInstitutionHeaderDetails(latestAnalysisData, metaInfo);
+        if (!printWin) {
+            alert("Please allow popups in your browser to open and save the PDF document.");
+            return;
+        }
+
+        const examLabel = [metaInfo && metaInfo.exam ? metaInfo.exam : "Analyzed File", metaInfo && metaInfo.year ? metaInfo.year : ""].filter(Boolean).join(" ").trim();
+        const cleanInstName = (instDetails.instituteName || "Institution").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
+        const eiinVal = instDetails.eiin || "EIIN";
+        const cleanSectionTitle = (title || "Report").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
+        const safeDocTitle = `${eiinVal}, ${cleanInstName} ${cleanSectionTitle} - ${examLabel}`;
+        const nowStr = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+
+        const html = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>${safeDocTitle}</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+            <style>
+                @page { size: A4 portrait; margin: 10mm 8mm; }
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                    font-size: 10px;
+                    color: #1e293b;
+                    background-color: #f8fafc;
+                    padding: 15px;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                }
+                .report-container {
+                    max-width: 1050px;
+                    margin: 0 auto;
+                    background: #ffffff;
+                    padding: 20px 24px;
+                    border-radius: 10px;
+                    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+                }
+                .report-header {
+                    border-bottom: 2px solid #0f172a;
+                    padding-bottom: 12px;
+                    margin-bottom: 15px;
+                }
+                .kpi-grid {
+                    display: flex;
+                    gap: 10px;
+                    margin-bottom: 15px;
+                    flex-wrap: wrap;
+                }
+                .kpi-card {
+                    flex: 1 1 140px;
+                    background: #ffffff;
+                    border: 1px solid #cbd5e1;
+                    border-top: 3px solid #2563eb;
+                    border-radius: 6px;
+                    padding: 8px 10px;
+                    text-align: center;
+                }
+                .kpi-card.kpi-success { border-top-color: #16a34a; }
+                .kpi-card.kpi-danger { border-top-color: #dc2626; }
+                .kpi-card.kpi-warning { border-top-color: #d97706; }
+                .kpi-card.kpi-dark { border-top-color: #0f172a; }
+                .kpi-card .kpi-num {
+                    font-size: 18px;
+                    font-weight: 800;
+                    line-height: 1.2;
+                    margin-top: 2px;
+                    margin-bottom: 1px;
+                }
+                .kpi-card .kpi-label {
+                    font-size: 9px;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    color: #64748b;
+                }
+                table {
+                    width: 100%;
+                    margin-bottom: 15px;
+                    font-size: 9.5px;
+                    border-collapse: collapse;
+                }
+                th {
+                    background-color: #0f172a !important;
+                    color: #ffffff !important;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    font-size: 8.5px;
+                    letter-spacing: 0.3px;
+                    padding: 5px 6px;
+                    border: 1px solid #334155 !important;
+                    text-align: center;
+                    vertical-align: middle;
+                }
+                td {
+                    padding: 4px 6px;
+                    border: 1px solid #cbd5e1;
+                    text-align: center;
+                    vertical-align: middle;
+                }
+                tbody tr:nth-child(even) { background-color: #f8fafc; }
+                .badge-gpa-gold { background-color: #fef3c7 !important; color: #92400e !important; font-weight: 700; }
+                .badge-gpa-green { background-color: #dcfce7 !important; color: #15803d !important; font-weight: 700; }
+                .badge-gpa-blue { background-color: #e0f2fe !important; color: #0369a1 !important; font-weight: 600; }
+                .badge-gpa-red { background-color: #fee2e2 !important; color: #b91c1c !important; font-weight: 700; }
+                .signoff-section {
+                    margin-top: 35px;
+                    padding-top: 15px;
+                    border-top: 1px dashed #cbd5e1;
+                    font-size: 10px;
+                    color: #475569;
+                }
+                .sign-line {
+                    border-top: 1.5px solid #0f172a;
+                    margin: 0 20px;
+                    padding-top: 4px;
+                    font-weight: bold;
+                }
+                @media print {
+                    .no-print { display: none !important; }
+                    body { padding: 0 !important; background: #ffffff !important; }
+                    .report-container { max-width: 100% !important; padding: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
+                    tr { page-break-inside: avoid; }
+                    thead { display: table-header-group; }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="report-container">
+                <!-- Action Toolbar (Hidden in print) -->
+                <div class="no-print d-flex justify-content-between align-items-center p-3 mb-3 bg-light border rounded-3 shadow-sm">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-danger fs-6 px-3 py-2"><i class="bi bi-file-earmark-pdf-fill me-1"></i> PDF Ready</span>
+                        <span class="text-secondary small">Click <strong>Print / Save as PDF</strong> below to download or print this document on A4.</span>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-danger btn-sm px-4 fw-bold shadow-sm" onclick="window.print()">
+                            <i class="bi bi-printer-fill me-1"></i> Print / Save as PDF
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm px-3" onclick="window.close()">
+                            Close
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Official Institutional Header Section -->
+                <div class="institution-header text-center mb-3 pb-2 border-bottom border-2 border-dark" style="page-break-inside: avoid;">
+                    <h2 style="font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px;">
+                        ${instDetails.instituteName}
+                    </h2>
+                    <div style="font-size: 11px; color: #334155; font-weight: 600; display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap;">
+                        <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Address:</strong> ${instDetails.address}</span>
+                        <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN:</strong> <span style="font-family: monospace; font-size: 12px; font-weight: 800; background: #e2e8f0; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; color: #0f172a;">${instDetails.eiin}</span></span>
+                        <span><i class="bi bi-award-fill text-success me-1"></i><strong>Board:</strong> ${(metaInfo.board || "Board").replace(/\s*\(Fast Server\)/i, "").trim()}</span>
+                    </div>
+                </div>
+
+                <!-- Header -->
+                <div class="report-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h4 class="fw-bold mb-0 text-dark" style="letter-spacing: -0.5px;">${title}</h4>
+                            <div class="text-primary fw-semibold mt-1" style="font-size: 11.5px;">
+                                ${metaInfo.exam || "HSC"} Examination ${metaInfo.year || ""} &bull; ${metaInfo.board || "Board"}
+                            </div>
+                            ${subtitle ? `<div class="text-muted small mt-0.5">${subtitle}</div>` : ""}
+                        </div>
+                        <div class="text-end text-secondary small" style="font-size: 9pt; line-height: 1.45;">
+                            <div><strong>Report Date:</strong> ${nowStr}</div>
+                            <div><strong>Academic Session:</strong> ${metaInfo.year || new Date().getFullYear()}</div>
+                            <div class="text-dark fw-bold mt-0.5">Academic Performance Record</div>
+                        </div>
+                    </div>
+                </div>
+
+                ${kpiCards ? `<div class="kpi-grid">${kpiCards}</div>` : ""}
+
+                ${noteText ? `<div class="p-2 mb-3 bg-light border rounded small text-secondary">${noteText}</div>` : ""}
+
+                <!-- Content Data Table -->
+                <div class="table-responsive">
+                    ${contentHtml}
+                </div>
+
+                <!-- Institutional Signoff -->
+                <div class="signoff-section">
+                    <div class="row text-center pt-4">
+                        <div class="col-4">
+                            <div class="sign-line">Prepared by (Assistant)</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="sign-line">Checked by (Tabulator)</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="sign-line">Head of Institution / Principal</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom Print Button (Hidden on paper) -->
+                <div class="no-print text-center my-4 pt-3 border-top">
+                    <button class="btn btn-danger px-5 shadow-sm fw-bold" onclick="window.print()">
+                        <i class="bi bi-printer-fill me-1"></i> Print / Save as PDF
+                    </button>
+                    <button class="btn btn-outline-secondary px-4 ms-2" onclick="window.close()">
+                        Close Window
+                    </button>
+                </div>
+            </div>
+
+            <script>
+                window.addEventListener('DOMContentLoaded', () => {
+                    setTimeout(() => {
+                        window.focus();
+                        window.print();
+                    }, 400);
+                });
+            </script>
+        </body>
+        </html>
+        `;
+
+        printWin.document.write(html);
+        printWin.document.close();
+    }
+
+    // Master dispatcher for exporting each separate option as a clean PDF
+    function downloadOptionPdf(optionKey, analysisData, metaInfo) {
+        const data = analysisData || latestAnalysisData;
+        if (!data) {
+            alert("No result analysis data is available to export. Please extract or upload results first.");
+            return;
+        }
+
+        const meta = metaInfo || {
+            exam: (examSelect && examSelect.options[examSelect.selectedIndex]?.text) || "HSC",
+            year: (yearSelect && yearSelect.value) || "2026",
+            board: (boardSelect && boardSelect.options[boardSelect.selectedIndex]?.text) || "Board"
+        };
+
+        if (optionKey === "subj_all" || optionKey === "subj_reg" || optionKey === "subj_irreg") {
+            const prefix = optionKey === "subj_all" ? "all" : (optionKey === "subj_reg" ? "reg" : "irreg");
+            const targetType = optionKey === "subj_all" ? "ALL" : (optionKey === "subj_reg" ? "REGULAR" : "IRREGULAR");
+            const typeLabel = optionKey === "subj_all" ? "Subject Wise Grade Analysis" : (optionKey === "subj_reg" ? "Regular Candidates Subject Analysis" : "Irregular Candidates Subject Analysis");
+
+            const groupFilter = document.getElementById(`${prefix}SubjGroupFilter`);
+            const searchInput = document.getElementById(`${prefix}SubjSearch`);
+            const selectedGroup = groupFilter ? groupFilter.value : "ALL";
+            const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+            const allSubjs = data.subject_analysis || [];
+
+            const renderSubjSectionTable = (items, sectionHeading, badgeLabel, badgeClass, descText = "") => {
+                if (!items || items.length === 0) return "";
+                const totApp = items.reduce((a, b) => a + (b.appeared || 0), 0);
+                const totPass = items.reduce((a, b) => a + (b.passed || 0), 0);
+                const totFail = items.reduce((a, b) => a + (b.failed || 0), 0);
+                const overallRate = totApp > 0 ? ((totPass / totApp) * 100).toFixed(2) : "0.00";
+
+                return `
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between align-items-center mb-1 pb-1 border-bottom">
+                            <div>
+                                <span class="badge ${badgeClass} me-2 font-monospace" style="font-size: 9px;">${badgeLabel}</span>
+                                <strong class="text-dark" style="font-size: 11.5px;">${sectionHeading}</strong>
+                            </div>
+                            <div class="small text-muted font-monospace">
+                                Subjects: <strong>${items.length}</strong> | Appeared: <strong>${totApp}</strong> | Passed: <strong class="text-success">${totPass}</strong> | Failed: <strong class="text-danger">${totFail}</strong> | Pass Rate: <strong class="text-primary">${overallRate}%</strong>
+                            </div>
+                        </div>
+                        ${descText ? `<div class="small text-muted mb-2 fst-italic" style="font-size: 9px;">${descText}</div>` : ""}
+                        <table class="table table-bordered table-sm mb-3">
+                            <thead>
+                                <tr>
+                                    <th class="text-start ps-2">Subject Code & Name</th>
+                                    <th>Group</th>
+                                    <th>Type</th>
+                                    <th>Appeared</th>
+                                    <th>Passed</th>
+                                    <th>Failed</th>
+                                    <th>Pass Rate</th>
+                                    <th class="badge-gpa-gold">A+</th>
+                                    <th class="badge-gpa-green">A</th>
+                                    <th class="badge-gpa-green">A-</th>
+                                    <th class="badge-gpa-blue">B</th>
+                                    <th class="badge-gpa-blue">C</th>
+                                    <th>D</th>
+                                    <th class="badge-gpa-red">F</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${items.map(it => `
+                                    <tr>
+                                        <td class="text-start ps-2 fw-semibold text-dark">${it.subject}</td>
+                                        <td><span class="badge bg-light text-secondary border">${it.group}</span></td>
+                                        <td><span class="badge bg-light text-dark border">${it.type}</span></td>
+                                        <td class="fw-semibold">${it.appeared}</td>
+                                        <td class="text-success fw-bold">${it.passed}</td>
+                                        <td class="${it.failed > 0 ? 'text-danger fw-bold' : 'text-muted'}">${it.failed}</td>
+                                        <td class="fw-bold">${it.pass_rate}%</td>
+                                        <td class="badge-gpa-gold">${(it.grades || {})["A+"] || 0}</td>
+                                        <td class="badge-gpa-green">${(it.grades || {})["A"] || 0}</td>
+                                        <td class="badge-gpa-green">${(it.grades || {})["A-"] || 0}</td>
+                                        <td class="badge-gpa-blue">${(it.grades || {})["B"] || 0}</td>
+                                        <td class="badge-gpa-blue">${(it.grades || {})["C"] || 0}</td>
+                                        <td>${(it.grades || {})["D"] || 0}</td>
+                                        <td class="${(it.grades || {})['F'] > 0 ? 'text-danger fw-bold' : 'text-muted'}">${(it.grades || {})["F"] || 0}</td>
+                                    </tr>
+                                `).join("")}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            };
+
+            let tableHtml = "";
+            let kpiHtml = "";
+
+            if (optionKey === "subj_all" && selectedGroup === "ALL" && !query) {
+                // Separate different sections for "All", "IMPROVEMENT", "IRREGULAR", "REGULAR", "BUSINESS STUDIES", "HUMANITIES", "SCIENCE"
+                const allCand = allSubjs.filter(it => it.group === "ALL" && it.type === "ALL");
+                const allCandList = allCand.length > 0 ? allCand : allSubjs.filter(it => it.type === "ALL");
+                const regularList = allSubjs.filter(it => it.group === "ALL" && it.type === "REGULAR");
+                const irregularList = allSubjs.filter(it => it.group === "ALL" && it.type === "IRREGULAR");
+                const improvementList = allSubjs.filter(it => it.group === "ALL" && it.type === "IMPROVEMENT");
+                const bizList = allSubjs.filter(it => it.group.toUpperCase() === "BUSINESS STUDIES" && it.type === "ALL");
+                const humList = allSubjs.filter(it => it.group.toUpperCase() === "HUMANITIES" && it.type === "ALL");
+                const sciList = allSubjs.filter(it => it.group.toUpperCase() === "SCIENCE" && it.type === "ALL");
+
+                const standardGrp = ["ALL", "BUSINESS STUDIES", "HUMANITIES", "SCIENCE"];
+                const otherGroups = [...new Set(allSubjs.map(it => it.group))].filter(g => g && !standardGrp.includes(g.toUpperCase()));
+
+                const totApp = allCandList.reduce((a, b) => a + (b.appeared || 0), 0);
+                const totPass = allCandList.reduce((a, b) => a + (b.passed || 0), 0);
+                const totFail = allCandList.reduce((a, b) => a + (b.failed || 0), 0);
+                const passRate = totApp > 0 ? ((totPass / totApp) * 100).toFixed(2) : "0.00";
+
+                kpiHtml = `
+                    <div class="kpi-card"><div class="kpi-label">Total Subjects</div><div class="kpi-num text-dark">${allCandList.length}</div></div>
+                    <div class="kpi-card"><div class="kpi-label">Total Appeared</div><div class="kpi-num text-primary">${totApp}</div></div>
+                    <div class="kpi-card kpi-success"><div class="kpi-label">Total Passed</div><div class="kpi-num text-success">${totPass}</div></div>
+                    <div class="kpi-card kpi-danger"><div class="kpi-label">Total Failed</div><div class="kpi-num text-danger">${totFail}</div></div>
+                    <div class="kpi-card kpi-warning"><div class="kpi-label">Pass Rate</div><div class="kpi-num text-warning">${passRate}%</div></div>
+                `;
+
+                tableHtml = `
+                    ${renderSubjSectionTable(allCandList, "1. All Candidates (Overall All Subjects Combined)", "ALL CANDIDATES", "bg-dark text-white", "Combined evaluation of all candidates across all subjects.")}
+                    ${renderSubjSectionTable(regularList, "2. Regular Candidates - Subject Performance", "REGULAR", "bg-primary text-white", "Subject grade distribution for regular candidates.")}
+                    ${renderSubjSectionTable(irregularList, "3. Irregular Candidates - Subject Performance", "IRREGULAR", "bg-warning text-dark", "Subject grade distribution for irregular examinees.")}
+                    ${improvementList.length > 0 ? renderSubjSectionTable(improvementList, "4. Improvement Candidates - Subject Performance", "IMPROVEMENT", "bg-info text-white", "Subject performance for candidates sitting for GPA improvement.") : ""}
+                    ${renderSubjSectionTable(bizList, "5. Business Studies Stream - Subject Performance", "BUSINESS STUDIES", "bg-success text-white", "Detailed grade distribution for core and elective subjects in Business Studies.")}
+                    ${renderSubjSectionTable(humList, "6. Humanities Stream - Subject Performance", "HUMANITIES", "bg-secondary text-white", "Detailed grade distribution for core and elective subjects in Humanities.")}
+                    ${renderSubjSectionTable(sciList, "7. Science Stream - Subject Performance", "SCIENCE", "bg-primary text-white", "Detailed grade distribution for core and elective subjects in Science.")}
+                    ${otherGroups.map((grpName, gIdx) => {
+                        const grpSubjs = allSubjs.filter(it => it.group.toUpperCase() === grpName.toUpperCase() && it.type === "ALL");
+                        return renderSubjSectionTable(grpSubjs, `${8 + gIdx}. ${grpName} Stream - Subject Performance`, grpName.toUpperCase(), "bg-secondary text-white");
+                    }).join("")}
+                `;
+            } else {
+                const filtered = allSubjs.filter(item => {
+                    if (item.type !== targetType) return false;
+                    if (selectedGroup !== "ALL" && item.group !== selectedGroup) return false;
+                    if (query && !item.subject.toLowerCase().includes(query)) return false;
+                    return true;
+                });
+
+                const totApp = filtered.reduce((a, b) => a + (b.appeared || 0), 0);
+                const totPass = filtered.reduce((a, b) => a + (b.passed || 0), 0);
+                const totFail = filtered.reduce((a, b) => a + (b.failed || 0), 0);
+                const passRate = totApp > 0 ? ((totPass / totApp) * 100).toFixed(2) : "0.00";
+
+                kpiHtml = `
+                    <div class="kpi-card"><div class="kpi-label">Subjects Evaluated</div><div class="kpi-num text-dark">${filtered.length}</div></div>
+                    <div class="kpi-card"><div class="kpi-label">Total Appeared</div><div class="kpi-num text-primary">${totApp}</div></div>
+                    <div class="kpi-card kpi-success"><div class="kpi-label">Total Passed</div><div class="kpi-num text-success">${totPass}</div></div>
+                    <div class="kpi-card kpi-danger"><div class="kpi-label">Total Failed</div><div class="kpi-num text-danger">${totFail}</div></div>
+                    <div class="kpi-card kpi-warning"><div class="kpi-label">Overall Pass %</div><div class="kpi-num text-warning">${passRate}%</div></div>
+                `;
+
+                tableHtml = filtered.length > 0 ? renderSubjSectionTable(filtered, `${typeLabel} - ${selectedGroup === "ALL" ? "All Groups" : selectedGroup}`, targetType, "bg-dark text-white") : `<p class="text-muted fst-italic p-3 text-center">No subject records match the selected filter.</p>`;
+            }
+
+            generatePdfReportWindow(
+                typeLabel,
+                `Group: ${selectedGroup === "ALL" ? "All Groups Combined" : selectedGroup} &bull; Filter: ${query ? `"${query}"` : "Complete Evaluation"}`,
+                meta,
+                kpiHtml,
+                tableHtml,
+                "Official subject-level grade distribution and pass evaluation."
+            );
+            return;
+        }
+
+        if (optionKey === "merit") {
+            const groupFilter = document.getElementById("meritGroupFilter");
+            const searchInput = document.getElementById("meritSearch");
+            const selectedGroup = groupFilter ? groupFilter.value : "ALL";
+            const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+
+            const allStudents = (data.merit_list && data.merit_list.students) || [];
+            const filtered = allStudents.filter(st => {
+                if (selectedGroup !== "ALL" && st.Group !== selectedGroup) return false;
+                if (query) {
+                    const str = `${st.Roll} ${st.Registration || ""} ${st.Name} ${st.Group} ${st.Type || ""}`.toLowerCase();
+                    if (!str.includes(query)) return false;
+                }
+                return true;
+            });
+
+            const goldenCount = filtered.filter(s => s.Is_GPA5_Without_4th).length;
+            const gpa5Count = filtered.filter(s => s.Is_GPA5_With_4th).length;
+            const topStudent = filtered.length > 0 ? filtered[0] : null;
+
+            const kpiHtml = `
+                <div class="kpi-card kpi-success"><div class="kpi-label">Ranked Passed Candidates</div><div class="kpi-num text-success">${filtered.length}</div></div>
+                <div class="kpi-card kpi-warning"><div class="kpi-label">Golden A+ (Pure / No 4th)</div><div class="kpi-num text-warning">${goldenCount}</div></div>
+                <div class="kpi-card"><div class="kpi-label">GPA 5.0 (With 4th Sub)</div><div class="kpi-num text-primary">${gpa5Count}</div></div>
+                <div class="kpi-card kpi-dark"><div class="kpi-label">Merit Rank #1 Topper</div><div class="kpi-num text-dark fs-7">${topStudent ? `${topStudent.Name} (${topStudent.Roll})` : 'N/A'}</div></div>
+            `;
+
+            const tableHtml = filtered.length > 0 ? `
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th style="width: 55px;">Merit #</th>
+                            <th style="width: 55px;">Group #</th>
+                            <th style="width: 80px;">Roll No</th>
+                            <th style="width: 90px;">Reg No</th>
+                            <th class="text-start ps-2">Student Name</th>
+                            <th>Group</th>
+                            <th>Type</th>
+                            <th>GPA (With 4th)</th>
+                            <th>GPA (Pure)</th>
+                            <th>A+</th>
+                            <th>A</th>
+                            <th class="text-start ps-2">Passed Subjects Summary</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${filtered.map(st => `
+                            <tr>
+                                <td class="fw-bold">${st.Merit_Position}</td>
+                                <td>${st.Group_Merit_Position || st.Merit_Position}</td>
+                                <td class="fw-bold">${st.Roll}</td>
+                                <td class="font-monospace text-muted">${st.Registration || "-"}</td>
+                                <td class="text-start ps-2 fw-semibold text-dark">${st.Name}</td>
+                                <td><span class="badge bg-light text-secondary border">${st.Group}</span></td>
+                                <td><span class="badge ${st.Type === 'REGULAR' ? 'bg-primary-subtle text-primary border' : 'bg-warning-subtle text-dark border'}">${st.Type || "REGULAR"}</span></td>
+                                <td class="fw-bold ${st.Is_GPA5_With_4th ? 'badge-gpa-gold' : 'text-primary'}">${st.GPA_With_4th}</td>
+                                <td class="${st.Is_GPA5_Without_4th ? 'badge-gpa-gold fw-bold' : 'text-muted'}">${st.GPA_Without_4th}</td>
+                                <td class="badge-gpa-gold">${st.A_Plus_Count || 0}</td>
+                                <td class="badge-gpa-green">${st.A_Count || 0}</td>
+                                <td class="text-start ps-2 small text-muted text-truncate" style="max-width: 220px;">${st.Passed_Grades_Summary || "-"}</td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            ` : `<p class="text-muted fst-italic p-3 text-center">No merit students found matching criteria.</p>`;
+
+            generatePdfReportWindow(
+                "Student Academic Merit List",
+                `Ranked in Order of Academic Excellence &bull; Group: ${selectedGroup === "ALL" ? "All Groups Combined" : selectedGroup}`,
+                meta,
+                kpiHtml,
+                tableHtml,
+                "Official student merit ranking based on GPA With 4th Subject, Pure GPA Without 4th Subject, A+ count, and academic tie-breakers."
+            );
+            return;
+        }
+
+        if (optionKey === "fail_subj_asc") {
+            const groupFilter = document.getElementById("failSubjGroupFilter");
+            const searchInput = document.getElementById("failSubjSearch");
+            const selectedGroup = groupFilter ? groupFilter.value : "ALL";
+            const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+
+            const allEntries = (data.failed_list_subject_wise && data.failed_list_subject_wise.entries) || [];
+            const filtered = allEntries.filter(item => {
+                if (selectedGroup !== "ALL" && item.Group !== selectedGroup) return false;
+                if (query) {
+                    const str = `${item.Failed_Subject} ${item.Roll} ${item.Registration || ""} ${item.Name} ${item.Group} ${item.Type || ""}`.toLowerCase();
+                    if (!str.includes(query)) return false;
+                }
+                return true;
+            });
+
+            const uniqueFailedStudents = new Set(filtered.map(e => e.Roll)).size;
+
+            const kpiHtml = `
+                <div class="kpi-card kpi-danger"><div class="kpi-label">Subject Failure Entries</div><div class="kpi-num text-danger">${filtered.length}</div></div>
+                <div class="kpi-card"><div class="kpi-label">Failed Candidates Count</div><div class="kpi-num text-dark">${uniqueFailedStudents}</div></div>
+                <div class="kpi-card kpi-warning"><div class="kpi-label">Sort Order</div><div class="kpi-num text-warning fs-7">Subject Ascending (A-Z)</div></div>
+            `;
+
+            const tableHtml = filtered.length > 0 ? `
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th class="text-start ps-2">Failed Subject (F)</th>
+                            <th style="width: 80px;">Roll No</th>
+                            <th style="width: 90px;">Reg No</th>
+                            <th class="text-start ps-2">Student Name</th>
+                            <th>Group</th>
+                            <th>Type</th>
+                            <th>Failed Count</th>
+                            <th class="text-start ps-2">All Failed Subjects</th>
+                            <th class="text-start ps-2">Passed Grades</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${filtered.map(item => `
+                            <tr>
+                                <td class="text-start ps-2 fw-bold text-danger">${item.Failed_Subject}</td>
+                                <td class="fw-bold">${item.Roll}</td>
+                                <td class="font-monospace text-muted">${item.Registration || "-"}</td>
+                                <td class="text-start ps-2 fw-semibold text-dark">${item.Name}</td>
+                                <td><span class="badge bg-light text-secondary border">${item.Group}</span></td>
+                                <td><span class="badge ${item.Type === 'REGULAR' ? 'bg-primary-subtle text-primary border' : 'bg-warning-subtle text-dark border'}">${item.Type || "REGULAR"}</span></td>
+                                <td class="fw-bold">${item.Failed_Count} Sub</td>
+                                <td class="text-start ps-2 small text-danger">${Array.isArray(item.All_Failed_Subjects) ? item.All_Failed_Subjects.join(", ") : item.All_Failed_Subjects}</td>
+                                <td class="text-start ps-2 small text-muted text-truncate" style="max-width: 180px;">${item.Passed_Grades_Summary || "-"}</td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            ` : `<p class="text-muted fst-italic p-3 text-center">No failed subject records found.</p>`;
+
+            generatePdfReportWindow(
+                "Subject-Wise Failed Students List (Ascending Order)",
+                `Organized alphabetically by failed subject code & name &bull; Group: ${selectedGroup === "ALL" ? "All Groups Combined" : selectedGroup}`,
+                meta,
+                kpiHtml,
+                tableHtml,
+                "Lists all candidates who received an 'F' grade, organized by subject in ascending order for remedial review."
+            );
+            return;
+        }
+
+        if (optionKey === "1fail") {
+            const oneFail = data.one_subject_fail || {};
+            const searchInput = document.getElementById("oneSubSearch");
+            const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+            const students = (oneFail.students || []).filter(st => {
+                if (query) {
+                    const str = `${st.Roll} ${st.Registration || ""} ${st.Name} ${st.Group} ${st.Type || ""} ${st.Failed_Subject}`.toLowerCase();
+                    if (!str.includes(query)) return false;
+                }
+                return true;
+            });
+
+            const kpiHtml = `
+                <div class="kpi-card kpi-warning"><div class="kpi-label">1-Subject Fail Candidates</div><div class="kpi-num text-warning">${students.length}</div></div>
+                <div class="kpi-card kpi-success"><div class="kpi-label">Supplementary Exam Eligible</div><div class="kpi-num text-success">${students.length} (100%)</div></div>
+            `;
+
+            const subjSummary = oneFail.subjects_summary || {};
+            const subjEntries = Object.entries(subjSummary);
+            const summaryTableHtml = subjEntries.length > 0 ? `
+                <div style="margin-bottom: 16px;">
+                    <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; margin-bottom: 6px; color: #1e293b; letter-spacing: 0.04em;">
+                        Summary: Number of Students Failed by Subject
+                    </div>
+                    <table class="table table-bordered table-sm text-center" style="margin-bottom: 15px;">
+                        <thead>
+                            <tr style="background-color: #f8fafc;">
+                                <th class="text-start ps-2">Failed Subject</th>
+                                <th style="width: 140px;">Failed Students Count</th>
+                                <th style="width: 110px;">% Share</th>
+                                <th style="width: 170px;">Supplementary Eligibility</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${subjEntries.map(([s, c]) => `
+                                <tr>
+                                    <td class="text-start ps-2 fw-bold text-danger">${s}</td>
+                                    <td class="fw-bold">${c}</td>
+                                    <td>${students.length > 0 ? ((c / students.length) * 100).toFixed(1) : 0}%</td>
+                                    <td><span class="badge bg-success-subtle text-success border">Retake Eligible</span></td>
+                                </tr>
+                            `).join("")}
+                        </tbody>
+                    </table>
+                </div>
+            ` : "";
+
+            const tableHtml = students.length > 0 ? `
+                ${summaryTableHtml}
+                <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; margin-bottom: 6px; color: #1e293b; letter-spacing: 0.04em;">
+                    Detailed Student Roster
+                </div>
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th style="width: 80px;">Roll No</th>
+                            <th style="width: 90px;">Reg No</th>
+                            <th class="text-start ps-2">Student Name</th>
+                            <th>Group</th>
+                            <th>Type</th>
+                            <th>Failed Subject (F)</th>
+                            <th class="text-start ps-2">Passed Subjects Summary</th>
+                            <th>Eligibility Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${students.map(st => `
+                            <tr>
+                                <td class="fw-bold">${st.Roll}</td>
+                                <td class="font-monospace text-muted">${st.Registration || "-"}</td>
+                                <td class="text-start ps-2 fw-semibold text-dark">${st.Name}</td>
+                                <td><span class="badge bg-light text-secondary border">${st.Group}</span></td>
+                                <td><span class="badge ${st.Type === 'REGULAR' ? 'bg-primary-subtle text-primary border' : 'bg-warning-subtle text-dark border'}">${st.Type || "REGULAR"}</span></td>
+                                <td class="fw-bold text-danger">${st.Failed_Subject}</td>
+                                <td class="text-start ps-2 small text-muted">${st.Passed_Grades_Summary || "-"}</td>
+                                <td><span class="badge bg-success-subtle text-success border border-success-subtle">Eligible for Supplementary</span></td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            ` : `<p class="text-muted fst-italic p-3 text-center">No students failed in only one subject.</p>`;
+
+            generatePdfReportWindow(
+                "One Subject Fail - Supplementary Eligible Candidates Roster",
+                `Total: ${students.length} Students`,
+                meta,
+                kpiHtml,
+                tableHtml,
+                "These candidates failed in exactly ONE subject and are eligible to sit for remedial / supplementary examination to clear their diploma/certificate."
+            );
+            return;
+        }
+
+        if (optionKey === "2fail") {
+            const twoFail = data.two_subject_fail || {};
+            const searchInput = document.getElementById("twoSubSearch");
+            const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+            const students = (twoFail.students || []).filter(st => {
+                if (query) {
+                    const str = `${st.Roll} ${st.Registration || ""} ${st.Name} ${st.Group} ${st.Type || ""} ${(st.Failed_Subjects || []).join(" ")}`.toLowerCase();
+                    if (!str.includes(query)) return false;
+                }
+                return true;
+            });
+
+            const kpiHtml = `
+                <div class="kpi-card kpi-danger"><div class="kpi-label">2-Subject Fail Candidates</div><div class="kpi-num text-danger">${students.length}</div></div>
+            `;
+
+            const subjs2Entries = Object.entries(twoFail.subjects_summary || {});
+            const pairs2Entries = Object.entries(twoFail.pair_summary || {});
+
+            const summary2Html = (subjs2Entries.length > 0 || pairs2Entries.length > 0) ? `
+                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                    <div style="flex: 1;">
+                        <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; margin-bottom: 6px; color: #1e293b;">Top Failing Subjects (2-Sub Fails)</div>
+                        <table class="table table-bordered table-sm text-center">
+                            <thead><tr style="background-color: #f8fafc;"><th class="text-start ps-2">Subject</th><th style="width: 80px;">Count</th></tr></thead>
+                            <tbody>${subjs2Entries.slice(0, 5).map(([s, c]) => `<tr><td class="text-start ps-2 fw-semibold text-danger">${s}</td><td>${c}</td></tr>`).join("")}</tbody>
+                        </table>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; margin-bottom: 6px; color: #1e293b;">Top Failing Subject Pairs (Combinations)</div>
+                        <table class="table table-bordered table-sm text-center">
+                            <thead><tr style="background-color: #f8fafc;"><th class="text-start ps-2">Subject Pair</th><th style="width: 80px;">Students</th></tr></thead>
+                            <tbody>${pairs2Entries.slice(0, 5).map(([p, c]) => `<tr><td class="text-start ps-2 fw-semibold">${p}</td><td>${c}</td></tr>`).join("")}</tbody>
+                        </table>
+                    </div>
+                </div>
+            ` : "";
+
+            const tableHtml = students.length > 0 ? `
+                ${summary2Html}
+                <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; margin-bottom: 6px; color: #1e293b; letter-spacing: 0.04em;">
+                    Detailed Student Roster
+                </div>
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th style="width: 80px;">Roll No</th>
+                            <th style="width: 90px;">Reg No</th>
+                            <th class="text-start ps-2">Student Name</th>
+                            <th>Group</th>
+                            <th>Type</th>
+                            <th>Failed Subjects (2)</th>
+                            <th class="text-start ps-2">Passed Subjects Summary</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${students.map(st => `
+                            <tr>
+                                <td class="fw-bold">${st.Roll}</td>
+                                <td class="font-monospace text-muted">${st.Registration || "-"}</td>
+                                <td class="text-start ps-2 fw-semibold text-dark">${st.Name}</td>
+                                <td><span class="badge bg-light text-secondary border">${st.Group}</span></td>
+                                <td><span class="badge ${st.Type === 'REGULAR' ? 'bg-primary-subtle text-primary border' : 'bg-warning-subtle text-dark border'}">${st.Type || "REGULAR"}</span></td>
+                                <td class="fw-bold text-danger">${(st.Failed_Subjects || []).join(", ")}</td>
+                                <td class="text-start ps-2 small text-muted">${st.Passed_Grades_Summary || "-"}</td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            ` : `<p class="text-muted fst-italic p-3 text-center">No students failed in two subjects.</p>`;
+
+            generatePdfReportWindow(
+                "Two Subject Fail Candidates List",
+                `Total: ${students.length} Students`,
+                meta,
+                kpiHtml,
+                tableHtml,
+                "Candidates failing in exactly two subjects who require targeted academic tutoring in these specific subjects."
+            );
+            return;
+        }
+
+        if (optionKey === "mfail") {
+            const mFail = data.multi_subject_fail || {};
+            const students = mFail.students || [];
+
+            const kpiHtml = `
+                <div class="kpi-card kpi-dark"><div class="kpi-label">3+ Subject Fail Candidates</div><div class="kpi-num text-dark">${students.length}</div></div>
+            `;
+
+            const tableHtml = students.length > 0 ? `
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th style="width: 80px;">Roll No</th>
+                            <th class="text-start ps-2">Student Name</th>
+                            <th>Group</th>
+                            <th>Type</th>
+                            <th>Failed Count</th>
+                            <th>Failed Subjects</th>
+                            <th class="text-start ps-2">Passed Subjects Summary</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${students.map(st => `
+                            <tr>
+                                <td class="fw-bold">${st.Roll}</td>
+                                <td class="text-start ps-2 fw-semibold text-dark">${st.Name}</td>
+                                <td><span class="badge bg-light text-secondary border">${st.Group}</span></td>
+                                <td><span class="badge ${st.Type === 'REGULAR' ? 'bg-primary-subtle text-primary border' : 'bg-warning-subtle text-dark border'}">${st.Type || "REGULAR"}</span></td>
+                                <td class="fw-bold text-danger">${st.Failed_Count} Subjects</td>
+                                <td class="text-danger fw-semibold">${(st.Failed_Subjects || []).join(", ")}</td>
+                                <td class="text-start ps-2 small text-muted">${st.Passed_Grades_Summary || "-"}</td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            ` : `<p class="text-muted fst-italic p-3 text-center">No students failed in 3 or more subjects.</p>`;
+
+            generatePdfReportWindow(
+                "Multi-Subject Fail (3+ Subjects) Candidates Roster",
+                `Total: ${students.length} Students`,
+                meta,
+                kpiHtml,
+                tableHtml,
+                "Candidates with multiple subject failures requiring targeted academic guidance."
+            );
+            return;
+        }
+
+        if (optionKey === "absent") {
+            const absentData = data.absent_analysis || {};
+            const searchInput = document.getElementById("absentSearch");
+            const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+            const students = (absentData.students || []).filter(st => {
+                if (query) {
+                    const str = `${st.Roll} ${st.Registration || ""} ${st.Name} ${st.Group} ${st.Type || ""}`.toLowerCase();
+                    if (!str.includes(query)) return false;
+                }
+                return true;
+            });
+
+            const kpiHtml = `
+                <div class="kpi-card kpi-danger"><div class="kpi-label">Total Absent Candidates</div><div class="kpi-num text-danger">${students.length}</div></div>
+                <div class="kpi-card"><div class="kpi-label">Absent Rate %</div><div class="kpi-num text-dark">${absentData.absent_rate || 0}%</div></div>
+                <div class="kpi-card"><div class="kpi-label">Regular Absent</div><div class="kpi-num text-primary">${absentData.regular_absent || 0}</div></div>
+                <div class="kpi-card"><div class="kpi-label">Irregular Absent</div><div class="kpi-num text-warning">${absentData.irregular_absent || 0}</div></div>
+                <div class="kpi-card kpi-success"><div class="kpi-label">Attended Examination</div><div class="kpi-num text-success">${absentData.appeared || 0}</div></div>
+            `;
+
+            const tableHtml = students.length > 0 ? `
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th style="width: 80px;">Roll No</th>
+                            <th style="width: 90px;">Reg No</th>
+                            <th class="text-start ps-2">Student Name</th>
+                            <th class="text-start ps-2">Father's Name</th>
+                            <th>Group</th>
+                            <th>Type</th>
+                            <th>Institute</th>
+                            <th>Status</th>
+                            <th>Remarks</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${students.map(st => `
+                            <tr>
+                                <td class="fw-bold">${st.Roll || "-"}</td>
+                                <td class="font-monospace text-muted">${st.Registration || "-"}</td>
+                                <td class="text-start ps-2 fw-semibold text-dark">${st.Name || "N/A"}</td>
+                                <td class="text-start ps-2 text-muted small">${st["Father Name"] || st.Father_Name || "-"}</td>
+                                <td><span class="badge bg-light text-secondary border">${st.Group || "GENERAL"}</span></td>
+                                <td><span class="badge ${st.Type === 'REGULAR' ? 'bg-primary-subtle text-primary border' : 'bg-warning-subtle text-dark border'}">${st.Type || "REGULAR"}</span></td>
+                                <td class="small text-truncate" style="max-width: 150px;">${st.Institute || "-"}</td>
+                                <td><span class="badge bg-secondary">ABSENT</span></td>
+                                <td class="small text-muted">${st.Remarks || "Did not sit for examination"}</td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            ` : `<p class="text-muted fst-italic p-3 text-center">No absent candidates recorded.</p>`;
+
+            generatePdfReportWindow(
+                "Absent Candidates Examination Roster",
+                `Total Absent: ${students.length} Candidates (${absentData.absent_rate || 0}% of Enrolled)`,
+                meta,
+                kpiHtml,
+                tableHtml,
+                "Official board attendance verification roster of candidates who did not sit for the examination."
+            );
+            return;
+        }
+
+        if (optionKey === "summary") {
+            const groupsSummary = data.groups_summary || {};
+            const gpaDist = data.gpa_distribution_with_4th || data.gpa_distribution || {};
+            const summary = data.summary || {};
+
+            const kpiHtml = `
+                <div class="kpi-card"><div class="kpi-label">Total Appeared</div><div class="kpi-num text-primary">${summary.appeared || 0}</div></div>
+                <div class="kpi-card kpi-success"><div class="kpi-label">Total Passed</div><div class="kpi-num text-success">${summary.passed || 0}</div></div>
+                <div class="kpi-card kpi-danger"><div class="kpi-label">Total Failed</div><div class="kpi-num text-danger">${summary.failed || 0}</div></div>
+                <div class="kpi-card kpi-warning"><div class="kpi-label">Total GPA 5.0</div><div class="kpi-num text-warning">${summary.gpa_5_count_with_4th || summary.gpa_5_count || 0}</div></div>
+            `;
+
+            const groupRows = Object.values(groupsSummary).map(grp => `
+                <tr>
+                    <td class="text-start ps-2 fw-bold text-dark">${grp.group}</td>
+                    <td>${grp.total}</td>
+                    <td>${grp.appeared}</td>
+                    <td class="text-muted">${grp.absent || 0}</td>
+                    <td class="text-success fw-bold">${grp.passed}</td>
+                    <td class="text-danger fw-bold">${grp.failed}</td>
+                    <td class="fw-bold">${grp.pass_rate}%</td>
+                    <td class="badge-gpa-gold">${grp.gpa5_count_with_4th !== undefined ? grp.gpa5_count_with_4th : grp.gpa5_count}</td>
+                    <td class="text-primary fw-bold">${grp.gpa5_count_without_4th !== undefined ? grp.gpa5_count_without_4th : 0}</td>
+                    <td>${grp.one_fail_count}</td>
+                    <td>${grp.two_fail_count}</td>
+                    <td>${grp.multi_fail_count}</td>
+                </tr>
+            `).join("");
+
+            const gpaRows = Object.entries(gpaDist).map(([tier, cnt]) => `
+                <tr>
+                    <td class="fw-bold text-start ps-2">${tier}</td>
+                    <td class="fw-bold">${cnt}</td>
+                    <td>${summary.appeared > 0 ? ((cnt / summary.appeared) * 100).toFixed(2) : '0.00'}%</td>
+                </tr>
+            `).join("");
+
+            const contentHtml = `
+                <h6 class="fw-bold text-dark text-uppercase mt-2 mb-2">Group Performance Breakdown</h6>
+                <table class="table table-bordered table-sm mb-4">
+                    <thead>
+                        <tr>
+                            <th class="text-start ps-2">Group</th>
+                            <th>Total</th>
+                            <th>Appeared</th>
+                            <th>Absent</th>
+                            <th>Passed</th>
+                            <th>Failed</th>
+                            <th>Pass %</th>
+                            <th class="badge-gpa-gold">GPA 5 (With 4th)</th>
+                            <th>GPA 5 (Without 4th)</th>
+                            <th>1-Fail</th>
+                            <th>2-Fail</th>
+                            <th>3+ Fail</th>
+                        </tr>
+                    </thead>
+                    <tbody>${groupRows}</tbody>
+                </table>
+
+                <h6 class="fw-bold text-dark text-uppercase mt-4 mb-2">GPA Tier Distribution</h6>
+                <table class="table table-bordered table-sm" style="max-width: 500px;">
+                    <thead>
+                        <tr>
+                            <th class="text-start ps-2">GPA Grade Tier</th>
+                            <th>Student Count</th>
+                            <th>Percentage of Appeared</th>
+                        </tr>
+                    </thead>
+                    <tbody>${gpaRows}</tbody>
+                </table>
+            `;
+
+            generatePdfReportWindow(
+                "Group Performance Comparison & GPA Breakdown Report",
+                `Analysis by academic curriculum group and GPA tier distribution`,
+                meta,
+                kpiHtml,
+                contentHtml
+            );
+            return;
+        }
+
+        if (optionKey === "reg_irreg") {
+            const reg = data.regular_summary || {};
+            const irreg = data.irregular_summary || {};
+            const typesSummary = data.types_summary || {};
+            const groupType = data.group_type_comparison || [];
+
+            const kpiHtml = `
+                <div class="kpi-card"><div class="kpi-label">Regular Students</div><div class="kpi-num text-primary">${reg.total || 0}</div><div class="small fw-bold text-success">${reg.pass_rate || 0}% Pass</div></div>
+                <div class="kpi-card kpi-warning"><div class="kpi-label">Irregular Students</div><div class="kpi-num text-warning">${irreg.total || 0}</div><div class="small fw-bold text-dark">${irreg.pass_rate || 0}% Pass</div></div>
+                <div class="kpi-card kpi-success"><div class="kpi-label">Regular GPA 5.0</div><div class="kpi-num text-success">${reg.gpa5_count || 0}</div></div>
+                <div class="kpi-card kpi-danger"><div class="kpi-label">Irregular Failures</div><div class="kpi-num text-danger">${irreg.failed || 0}</div></div>
+            `;
+
+            const typeRows = Object.values(typesSummary).map(t => `
+                <tr>
+                    <td class="text-start ps-2 fw-bold">${t.type}</td>
+                    <td>${t.total}</td>
+                    <td>${t.appeared}</td>
+                    <td class="text-success fw-bold">${t.passed}</td>
+                    <td class="text-danger fw-bold">${t.failed}</td>
+                    <td class="fw-bold">${t.pass_rate}%</td>
+                    <td class="badge-gpa-gold">${t.gpa5_count}</td>
+                    <td>${t.one_fail_count}</td>
+                    <td>${t.two_fail_count}</td>
+                    <td>${t.multi_fail_count}</td>
+                </tr>
+            `).join("");
+
+            const matrixRows = groupType.map(row => `
+                <tr>
+                    <td class="text-start ps-2 fw-semibold">${row.group}</td>
+                    <td><span class="badge ${row.type === 'REGULAR' ? 'bg-primary-subtle text-primary border' : 'bg-warning-subtle text-dark border'}">${row.type}</span></td>
+                    <td>${row.total}</td>
+                    <td>${row.appeared}</td>
+                    <td class="text-success fw-bold">${row.passed}</td>
+                    <td class="text-danger fw-bold">${row.failed}</td>
+                    <td class="fw-bold">${row.pass_rate}%</td>
+                    <td class="badge-gpa-gold">${row.gpa5_count}</td>
+                    <td>${row.one_fail_count}</td>
+                    <td>${row.two_fail_count}</td>
+                    <td>${row.multi_fail_count}</td>
+                </tr>
+            `).join("");
+
+            const contentHtml = `
+                <h6 class="fw-bold text-dark text-uppercase mt-2 mb-2">Overall Candidate Type Performance</h6>
+                <table class="table table-bordered table-sm mb-4">
+                    <thead>
+                        <tr>
+                            <th class="text-start ps-2">Candidate Category</th>
+                            <th>Total</th>
+                            <th>Appeared</th>
+                            <th>Passed</th>
+                            <th>Failed</th>
+                            <th>Pass Rate</th>
+                            <th class="badge-gpa-gold">GPA 5.0</th>
+                            <th>1-Sub Fail</th>
+                            <th>2-Sub Fail</th>
+                            <th>3+ Sub Fail</th>
+                        </tr>
+                    </thead>
+                    <tbody>${typeRows}</tbody>
+                </table>
+
+                <h6 class="fw-bold text-dark text-uppercase mt-4 mb-2">Group x Candidate Type Matrix</h6>
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th class="text-start ps-2">Group</th>
+                            <th>Candidate Category</th>
+                            <th>Total</th>
+                            <th>Appeared</th>
+                            <th>Passed</th>
+                            <th>Failed</th>
+                            <th>Pass Rate</th>
+                            <th class="badge-gpa-gold">GPA 5.0</th>
+                            <th>1-Sub Fail</th>
+                            <th>2-Sub Fail</th>
+                            <th>3+ Sub Fail</th>
+                        </tr>
+                    </thead>
+                    <tbody>${matrixRows}</tbody>
+                </table>
+            `;
+
+            generatePdfReportWindow(
+                "Regular vs Irregular Candidates Comparative Analysis",
+                `Comparison of regular vs irregular candidates performance`,
+                meta,
+                kpiHtml,
+                contentHtml
+            );
+            return;
+        }
     }
 });

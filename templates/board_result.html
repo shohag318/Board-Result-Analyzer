@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+
+{% block title %}Board Result - Bangladesh Education Board Result Analyzer{% endblock %}
+
+{% block content %}
+<main class="container my-4 my-md-5">
+
+    <div class="row g-4">
+        <!-- Left Column: Controls & Search Forms -->
+        <div class="col-lg-5">
+            <div class="card shadow-sm border-0 rounded-4">
+                <div class="card-header bg-white border-0 pt-4 px-4 pb-0">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-sliders2 text-primary fs-5"></i>
+                        <h5 class="fw-bold mb-0">Examination Credentials</h5>
+                    </div>
+                    <small class="text-muted d-block mt-1">Select your exam details and choose batch file or single roll search.</small>
+                </div>
+                <div class="card-body p-4">
+                    <!-- Examination Dropdown -->
+                    <div class="mb-3">
+                        <label for="exam" class="form-label fw-semibold text-secondary fs-7">EXAMINATION</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light border-end-0"><i class="bi bi-journal-bookmark"></i></span>
+                            <select class="form-select border-start-0" id="exam" name="exam" required>
+                                <option value="hsc" selected>HSC / Alim / Equivalent</option>
+                                <option value="ssc">SSC / Dakhil / Equivalent</option>
+                                <option value="ssc_voc">SSC (Vocational)</option>
+                                <option value="hsc_voc">HSC (Vocational)</option>
+                                <option value="hsc_hbm">HSC (B.M.)</option>
+                                <option value="dakhil">Dakhil</option>
+                                <option value="jsc">JSC / JDC</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Year & Board Dropdowns -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-sm-6">
+                            <label for="year" class="form-label fw-semibold text-secondary fs-7">YEAR</label>
+                            <div class="input-group">
+                                <span class="input-group-text bg-light border-end-0"><i class="bi bi-calendar-event"></i></span>
+                                <select class="form-select border-start-0" id="year" name="year" required>
+                                    <option value="2026" selected>2026</option>
+                                    <option value="2025">2025</option>
+                                    <option value="2024">2024</option>
+                                    <option value="2023">2023</option>
+                                    <option value="2022">2022</option>
+                                    <option value="2021">2021</option>
+                                    <option value="2020">2020</option>
+                                    <option value="2019">2019</option>
+                                    <option value="2018">2018</option>
+                                    <option value="2017">2017</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="col-sm-6">
+                            <label for="board" class="form-label fw-semibold text-secondary fs-7">BOARD</label>
+                            <div class="input-group">
+                                <span class="input-group-text bg-light border-end-0"><i class="bi bi-geo-alt"></i></span>
+                                <select class="form-select border-start-0" id="board" name="board" required>
+                                    <option value="dhaka" selected>Dhaka</option>
+                                    <option value="rajshahi">Rajshahi</option>
+                                    <option value="chittagong">Chattogram (Chittagong)</option>
+                                    <option value="comilla">Cumilla (General)</option>
+                                    <option value="barisal">Barishal (Barisal)</option>
+                                    <option value="dinajpur">Dinajpur</option>
+                                    <option value="jessore">Jashore (Jessore)</option>
+                                    <option value="mymensingh">Mymensingh</option>
+                                    <option value="sylhet">Sylhet</option>
+                                    <option value="madrasah">Madrasah</option>
+                                    <option value="technical">Technical (BTEB)</option>
+                                    <option value="dibs">DIBS (Dhaka)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Server Connection Info Banner -->
+                    <div id="eduBoardAlert" class="alert alert-primary d-flex align-items-center py-2 px-3 mb-3 rounded-3 border-0 shadow-xs">
+                        <i class="bi bi-building fs-4 text-primary me-2"></i>
+                        <div>
+                            <div class="fw-bold small text-primary"><span id="activeBoardName">Dhaka</span> Board Active</div>
+                            <div class="text-secondary" style="font-size: 0.8rem;">
+                                Connecting to <a href="http://www.educationboardresults.gov.bd/" target="_blank" class="fw-semibold text-primary text-decoration-underline">educationboardresults.gov.bd</a>. Requires Roll, Reg & Security Code.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Mode Switcher Tabs -->
+                    <label class="form-label fw-semibold text-secondary fs-7 mb-2">LOOKUP METHOD</label>
+                    <div class="mode-tabs-container mb-3">
+                        <ul class="nav nav-pills nav-fill" id="modeTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="bulk-tab" data-bs-toggle="pill" data-bs-target="#bulkMode" type="button" role="tab" aria-selected="true">
+                                    <i class="bi bi-file-earmark-spreadsheet me-1"></i> Batch File Upload
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="individual-tab" data-bs-toggle="pill" data-bs-target="#individualMode" type="button" role="tab" aria-selected="false">
+                                    <i class="bi bi-person me-1"></i> Single Roll Check
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content" id="modeTabsContent">
+                        <!-- TAB 1: BULK FILE UPLOAD -->
+                        <div class="tab-pane fade show active" id="bulkMode" role="tabpanel">
+                            <form id="bulkForm">
+                                <div class="mb-3">
+                                    <div class="drop-zone p-4 text-center rounded-3" id="dropZone">
+                                        <i class="bi bi-cloud-arrow-up text-primary fs-1 mb-2 d-block"></i>
+                                        <span class="fw-semibold text-dark d-block">Drag & drop your CSV or Excel file</span>
+                                        <span class="text-muted small">Must contain <code>Roll</code> column (<code>Registration</code> recommended for full transcript)</span>
+                                        <input type="file" id="fileInput" name="file" accept=".csv, .xlsx, .xls" class="d-none">
+                                        <div class="mt-3">
+                                            <button type="button" class="btn btn-outline-primary btn-sm rounded-pill px-3" onclick="document.getElementById('fileInput').click()">
+                                                <i class="bi bi-folder2-open me-1"></i> Browse Computer
+                                            </button>
+                                        </div>
+                                        <div id="fileInfo" class="mt-2 text-success small fw-medium d-none">
+                                            <i class="bi bi-check-circle-fill me-1"></i> <span id="fileName"></span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="demoMode" name="demo_mode">
+                                    <label class="form-check-label text-secondary small" for="demoMode">
+                                        <strong>Simulation Demo Mode</strong> (generates instant mock results without hitting board server)
+                                    </label>
+                                </div>
+
+                                <button type="submit" id="submitBulkBtn" class="btn btn-primary w-100 py-2.5 rounded-3 fw-semibold shadow-xs">
+                                    <i class="bi bi-play-circle-fill me-1"></i> Start Batch Extraction
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- TAB 2: INDIVIDUAL LOOKUP -->
+                        <div class="tab-pane fade" id="individualMode" role="tabpanel">
+                            <form id="individualForm">
+                                <div class="mb-3">
+                                    <label for="indRoll" class="form-label fw-semibold text-secondary fs-7">ROLL NUMBER</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light border-end-0"><i class="bi bi-hash"></i></span>
+                                        <input type="text" class="form-control border-start-0" id="indRoll" name="roll" placeholder="e.g. 100101" required pattern="\d+" maxlength="12">
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="indReg" class="form-label fw-semibold text-secondary fs-7">REGISTRATION NUMBER</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light border-end-0"><i class="bi bi-card-text"></i></span>
+                                        <input type="text" class="form-control border-start-0" id="indReg" name="reg" placeholder="e.g. 1512345678" pattern="\d*" maxlength="15">
+                                    </div>
+                                    <small id="regHelpText" class="text-muted fs-8">Required for general education boards full marksheet.</small>
+                                </div>
+
+                                <!-- Captcha Section -->
+                                <div id="captchaContainer" class="mb-3">
+                                    <label for="indCaptcha" class="form-label fw-semibold text-secondary fs-7">SECURITY CODE (CAPTCHA)</label>
+                                    <div class="d-flex align-items-center gap-2 mb-2">
+                                        <div class="captcha-box border rounded bg-white p-1 d-flex align-items-center justify-content-center" style="min-width: 140px; height: 46px;">
+                                            <img id="captchaImg" src="" alt="Security Code" class="h-100 w-auto rounded" style="display: none; max-height: 40px;">
+                                            <div id="captchaSpinner" class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                                        </div>
+                                        <button type="button" id="refreshCaptchaBtn" class="btn btn-outline-secondary btn-sm rounded-circle p-2" title="Reload Security Code">
+                                            <i class="bi bi-arrow-clockwise"></i>
+                                        </button>
+                                        <div class="flex-grow-1">
+                                            <input type="text" class="form-control text-center fw-bold fs-5 tracking-wide" id="indCaptcha" name="captcha" placeholder="4 Digits" maxlength="6" autocomplete="off">
+                                        </div>
+                                    </div>
+                                    <small class="text-muted fs-8">Enter the 4-digit code shown in the image.</small>
+                                </div>
+
+                                <button type="submit" id="submitIndBtn" class="btn btn-primary w-100 py-2.5 rounded-3 fw-semibold shadow-xs">
+                                    <i class="bi bi-search me-1"></i> Get Official Marksheet
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Results & Marksheet View -->
+        <div class="col-lg-7">
+            <!-- Individual Student Marksheet Card -->
+            <div class="card shadow-sm border-0 rounded-4 mb-4" id="individualResultCard" style="display: none;">
+                <div class="card-body p-4">
+                                        <div class="marksheet-wrapper bg-white p-4 rounded-3 border">
+                        <!-- Official Institutional Header for Marksheet Print -->
+                        <div class="institution-header text-center mb-3 pb-2 border-bottom border-2 border-dark" id="marksheetHeaderInstBlock">
+
+                            <h3 class="fw-bold text-dark my-1 text-uppercase" id="marksheetHeaderInstName" style="font-size: 17px;">
+                                DHAKA COLLEGE
+                            </h3>
+                            <div class="text-muted small d-flex justify-content-center align-items-center gap-3 flex-wrap" style="font-size: 11px;">
+                                <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Address:</strong> <span id="marksheetHeaderAddress">Dhaka, Bangladesh</span></span>
+                                <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN:</strong> <span id="marksheetHeaderEiin" style="font-family: monospace; font-weight: 700;">107977</span></span>
+                            </div>
+                        </div>
+                        <div class="text-center border-bottom pb-3 mb-3">
+                            <span class="badge bg-secondary-subtle text-secondary px-3 py-1 rounded-pill fw-semibold mb-2" id="marksheetBadge">
+                                OFFICIAL TRANSCRIPT OF ACADEMIC RECORD
+                            </span>
+                            <h4 class="fw-bold text-dark mb-1" id="marksheetName">STUDENT NAME</h4>
+                            <div class="text-muted small">
+                                <span id="marksheetExam">HSC</span> Examination - <span id="marksheetYear">2026</span> &bull; 
+                                Board: <strong id="marksheetBoard">Dhaka</strong>
+                            </div>
+                        </div>
+
+                        <div class="text-center my-3">
+                            <span class="badge bg-success-subtle text-success fs-7 px-3 py-2 border border-success-subtle d-inline-block" id="marksheetResultBadge">
+                                RESULT: PASSED &bull; GPA: <strong id="marksheetGpa">5.00</strong>
+                            </span>
+                        </div>
+
+                        <div class="row g-2 mb-3 bg-light p-3 rounded-3 fs-8">
+                            <div class="col-6 col-sm-4">
+                                <span class="text-muted d-block">Roll Number</span>
+                                <strong class="text-dark" id="marksheetRoll">-</strong>
+                            </div>
+                            <div class="col-6 col-sm-4">
+                                <span class="text-muted d-block">Registration</span>
+                                <strong class="text-dark" id="marksheetReg">-</strong>
+                            </div>
+                            <div class="col-6 col-sm-4">
+                                <span class="text-muted d-block">Group</span>
+                                <strong class="text-dark" id="marksheetGroup">-</strong>
+                            </div>
+                            <div class="col-6 col-sm-4">
+                                <span class="text-muted d-block">Student Type</span>
+                                <strong class="text-dark" id="marksheetType">REGULAR</strong>
+                            </div>
+                            <div class="col-6 col-sm-4">
+                                <span class="text-muted d-block">Father's Name</span>
+                                <strong class="text-dark" id="marksheetFather">-</strong>
+                            </div>
+                            <div class="col-6 col-sm-4">
+                                <span class="text-muted d-block">Mother's Name</span>
+                                <strong class="text-dark" id="marksheetMother">-</strong>
+                            </div>
+                            <div class="col-12 mt-2 pt-2 border-top" id="marksheetInstituteRow">
+                                <span class="text-muted d-block">Institute</span>
+                                <strong class="text-dark" id="marksheetInstitute">-</strong>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive mb-3">
+                            <table class="table table-bordered table-sm align-middle text-center mb-0">
+                                <thead class="table-light fs-8">
+                                    <tr>
+                                        <th class="text-start">Subject Name & Code</th>
+                                        <th style="width: 100px;">Letter Grade</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="marksheetGradesBody" class="fs-8"></tbody>
+                            </table>
+                        </div>
+
+                        <div class="d-flex justify-content-end gap-2 pt-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill px-3" onclick="window.print()">
+                                <i class="bi bi-printer me-1"></i> Print Marksheet
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Batch Progress Card -->
+            <div class="card shadow-sm border-0 rounded-4 mb-4" id="progressCard" style="display: none;">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="fw-bold text-dark fs-6" id="progressTitle">Processing student results...</span>
+                        <span class="badge bg-primary rounded-pill px-2.5 py-1" id="progressPercentBadge">0%</span>
+                    </div>
+                    <div class="progress mb-2" style="height: 10px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" id="progressBar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <div class="d-flex justify-content-between text-muted fs-8">
+                        <span id="statusMessage">Connecting to server...</span>
+                        <span id="studentCounter">0 / 0</span>
+                    </div>
+
+                    <div class="d-flex flex-column gap-2 pt-3 mt-3 border-top" id="downloadSection" style="display: none !important;">
+                        <div class="d-flex gap-2">
+                            <a id="downloadXlsxBtn" href="#" class="btn btn-success flex-fill rounded-3 py-2 fw-semibold">
+                                <i class="bi bi-file-earmark-excel me-1"></i> Download Excel (.xlsx)
+                            </a>
+                            <a id="downloadCsvBtn" href="#" class="btn btn-outline-secondary flex-fill rounded-3 py-2 fw-semibold">
+                                <i class="bi bi-file-earmark-text me-1"></i> Download CSV
+                            </a>
+                        </div>
+                        <a id="openAnalysisBtn" href="/result-analysis" class="btn btn-primary w-100 py-2.5 rounded-3 fw-bold shadow-xs">
+                            <i class="bi bi-bar-chart-line-fill me-1"></i> View Comprehensive Result Analysis &rarr;
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results Table Card -->
+            <div class="card shadow-sm border-0 rounded-4 overflow-hidden" id="resultsTableCard">
+                <div class="card-header bg-white border-0 pt-4 px-4 pb-2 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold mb-0">Extracted Student Results</h5>
+                        <small class="text-muted">Real-time parsed records from examination server</small>
+                    </div>
+                    <span class="badge bg-secondary-subtle text-secondary px-3 py-2 rounded-pill" id="resultsCount">0 Students</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 480px;">
+                        <table class="table table-hover align-middle mb-0 text-nowrap" id="resultsTable">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>Roll</th>
+                                    <th>Reg</th>
+                                    <th>Name</th>
+                                    <th>GPA</th>
+                                    <th>Result</th>
+                                    <th>Subject Summary</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultsBody">
+                                <tr id="emptyResultsRow">
+                                    <td colspan="6" class="text-center py-5 text-muted">
+                                        <i class="bi bi-inbox fs-1 d-block mb-2 text-secondary opacity-50"></i>
+                                        No student results extracted yet.<br>
+                                        <small class="text-muted">Upload a CSV/Excel file or check an individual roll to populate results.</small>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/board_result.js?v=4.0.0"></script>
+{% endblock %}
