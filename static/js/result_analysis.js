@@ -30,6 +30,20 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
+    if (printAnalysisBtn) {
+        printAnalysisBtn.onclick = () => {
+            if (!latestAnalysisData) {
+                alert("Please upload a result file or load demo data first before generating the PDF report.");
+                return;
+            }
+            printAnalysisReport(latestAnalysisData, latestMetaInfo || {
+                exam: (examSelect && examSelect.options[examSelect.selectedIndex]?.text) || "HSC",
+                year: (yearSelect && yearSelect.value) || "2026",
+                board: (boardSelect && boardSelect.options[boardSelect.selectedIndex]?.text) || "Board"
+            });
+        };
+    }
+
     async function loadDemoData() {
         const btn = loadDemoAnalysisBtn || calloutLoadDemoBtn;
         if (btn) {
@@ -125,8 +139,16 @@ document.addEventListener("DOMContentLoaded", async () => {
                 if (exportAnalysisExcelBtn) {
                     exportAnalysisExcelBtn.onclick = async (e) => {
                         e.preventDefault();
+                        const fileInstDetails = getInstitutionHeaderDetails(latestAnalysisData, {
+                            exam: "Analyzed File",
+                            year: "",
+                            board: (latestAnalysisData && latestAnalysisData.board) || ""
+                        });
                         const exportForm = new FormData();
                         exportForm.append("file", file);
+                        if (fileInstDetails.eiin) {
+                            exportForm.append("eiin", fileInstDetails.eiin);
+                        }
                         const expResp = await fetch("/api/export-analysis-file", {
                             method: "POST",
                             body: exportForm
@@ -135,10 +157,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                         const url = window.URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = url;
-                        const fileInstDetails = getInstitutionHeaderDetails(latestAnalysisData, { exam: "Analyzed File", year: "", board: file.name });
-                        const fileEiin = fileInstDetails.eiin || "105820";
+                        const fileEiinPrefix = fileInstDetails.eiin ? `${fileInstDetails.eiin}, ` : "";
                         const fileInst = (fileInstDetails.instituteName || "Institution").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
-                        a.download = `${fileEiin}, ${fileInst} Board Result Comprehensive Analysis Report - ${file.name.replace(/\.[^/.]+$/, "")}.xlsx`;
+                        a.download = `${fileEiinPrefix}${fileInst} Board Result Comprehensive Analysis Report - ${file.name.replace(/\.[^/.]+$/, "")}.xlsx`;
                         document.body.appendChild(a);
                         a.click();
                         a.remove();
@@ -148,7 +169,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 displayResultAnalysis(latestAnalysisData, {
                     exam: "Analyzed File",
                     year: "",
-                    board: file.name
+                    board: (latestAnalysisData && latestAnalysisData.board) || file.name
                 });
 
             } catch (err) {
@@ -228,18 +249,66 @@ document.addEventListener("DOMContentLoaded", async () => {
         const instDetails = getInstitutionHeaderDetails(analysisData, metaInfo);
         const analysisInstituteBadge = document.getElementById("analysisInstituteBadge");
         const analysisInstituteName = document.getElementById("analysisInstituteName");
+        const resolvedBoardLabel = (analysisData.board || (analysisData.summary && analysisData.summary.board) || (metaInfo && metaInfo.board) || "All Boards");
 
-        if (instDetails.instituteName && instDetails.instituteName.trim()) {
+        function updateHeaderEiinDisplay(details) {
+            const eiinDisplay = details.eiin || "N/A";
             if (analysisInstituteName) {
-                analysisInstituteName.innerHTML = `${instDetails.instituteName} <span class="badge bg-light text-dark ms-1 font-monospace" style="font-size: 10px;">EIIN: ${instDetails.eiin}</span>`;
+                analysisInstituteName.innerHTML = `${details.instituteName} <span class="badge bg-light text-dark ms-1 font-monospace" style="font-size: 10px;" title="Click EIIN number to edit">EIIN: <span id="analysisHeaderEiin" contenteditable="true" spellcheck="false" style="outline:none; border-bottom: 1px dashed #64748b; padding: 0 2px;">${eiinDisplay}</span></span>`;
+                const eiinEl = document.getElementById("analysisHeaderEiin");
+                if (eiinEl) {
+                    eiinEl.addEventListener("input", () => {
+                        const val = eiinEl.textContent.trim();
+                        const cleanVal = (val && val.toUpperCase() !== "N/A") ? val : "";
+                        if (latestAnalysisData) {
+                            latestAnalysisData.eiin = cleanVal;
+                            if (latestAnalysisData.summary) latestAnalysisData.summary.eiin = cleanVal;
+                        }
+                        if (/^\d{4,8}$/.test(cleanVal) && details.instituteName) {
+                            saveEiinOverride(details.instituteName, cleanVal);
+                        }
+                        if (analysisMetaText) {
+                            analysisMetaText.textContent = `${metaInfo.exam || "Examination"} ${metaInfo.year || ""} | ${resolvedBoardLabel} | EIIN: ${cleanVal || "N/A"} | ${summary.total_students || 0} Records Analyzed | ${details.instituteName}`;
+                        }
+                        if (exportAnalysisExcelBtn && latestJobId) {
+                            exportAnalysisExcelBtn.href = cleanVal
+                                ? `/api/download-analysis/${latestJobId}?eiin=${encodeURIComponent(cleanVal)}`
+                                : `/api/download-analysis/${latestJobId}`;
+                        }
+                    });
+                }
             }
-            if (analysisInstituteBadge) analysisInstituteBadge.style.display = "inline-flex";
-        } else {
-            if (analysisInstituteBadge) analysisInstituteBadge.style.display = "none";
+            if (analysisMetaText) {
+                analysisMetaText.textContent = `${metaInfo.exam || "Examination"} ${metaInfo.year || ""} | ${resolvedBoardLabel} | EIIN: ${eiinDisplay} | ${summary.total_students || 0} Records Analyzed | ${details.instituteName}`;
+            }
         }
 
-        if (analysisMetaText) {
-            analysisMetaText.textContent = `${metaInfo.exam || "Examination"} ${metaInfo.year || ""} | ${metaInfo.board || "All Boards"} | EIIN: ${instDetails.eiin} | ${summary.total_students || 0} Records Analyzed | ${instDetails.instituteName}`;
+        if (instDetails.instituteName && instDetails.instituteName.trim()) {
+            updateHeaderEiinDisplay(instDetails);
+            if (analysisInstituteBadge) analysisInstituteBadge.style.display = "inline-flex";
+            // If EIIN is not yet populated (e.g. older session data), query backend directory dynamically
+            if (!instDetails.eiin) {
+                fetch(`/api/lookup-institution?institute=${encodeURIComponent(instDetails.instituteName)}&board=${encodeURIComponent(resolvedBoardLabel)}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(data => {
+                        if (data && data.found && data.eiin) {
+                            analysisData.eiin = data.eiin;
+                            if (analysisData.summary) analysisData.summary.eiin = data.eiin;
+                            if (data.address) {
+                                analysisData.address = data.address;
+                                if (analysisData.summary) analysisData.summary.address = data.address;
+                            }
+                            const updated = getInstitutionHeaderDetails(analysisData, metaInfo);
+                            updateHeaderEiinDisplay(updated);
+                        }
+                    })
+                    .catch(() => {});
+            }
+        } else {
+            if (analysisInstituteBadge) analysisInstituteBadge.style.display = "none";
+            if (analysisMetaText) {
+                analysisMetaText.textContent = `${metaInfo.exam || "Examination"} ${metaInfo.year || ""} | ${resolvedBoardLabel} | ${summary.total_students || 0} Records Analyzed`;
+            }
         }
 
         // 2. Regular vs Irregular KPI Quick Banner
@@ -674,8 +743,11 @@ document.addEventListener("DOMContentLoaded", async () => {
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement("a");
                 link.setAttribute("href", url);
-                const meritEiin = (analysisData && (analysisData.eiin || (analysisData.summary && analysisData.summary.eiin))) || "105820";
-                link.setAttribute("download", `Student_Merit_List_EIIN_${meritEiin}_${new Date().toISOString().slice(0,10)}.csv`);
+                const instDetails = getInstitutionHeaderDetails(analysisData, metaInfo);
+                const meritEiinPrefix = instDetails.eiin ? `${instDetails.eiin}, ` : "";
+                const meritInst = (instDetails.instituteName || "Institution").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
+                const examLabel = [metaInfo && metaInfo.exam ? metaInfo.exam : "Result", metaInfo && metaInfo.year ? metaInfo.year : ""].filter(Boolean).join(" ").trim();
+                link.setAttribute("download", `${meritEiinPrefix}${meritInst} Student Merit List - ${examLabel}.csv`);
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
@@ -1971,6 +2043,382 @@ document.addEventListener("DOMContentLoaded", async () => {
         };
     }
 
+    // =========================================================================
+    // PRIMARY FAIL SUBJECT SUMMARY MATRIX (GROUP & CANDIDATE TYPE BREAKDOWN)
+    // =========================================================================
+    function buildFailSummaryMatrix(analysisData) {
+        if (analysisData && analysisData.fail_subject_summary_matrix && Array.isArray(analysisData.fail_subject_summary_matrix.rows) && analysisData.fail_subject_summary_matrix.rows.length > 0) {
+            return analysisData.fail_subject_summary_matrix;
+        }
+
+        function mapMatrixGroup(rawGrp) {
+            const g = String(rawGrp || "").trim().toUpperCase();
+            if (g.includes("SCI")) return "Science";
+            if (g.includes("BUS") || g.includes("COMMERCE") || g.includes("B.STUDIES") || g.includes("MGT")) return "Business Studies";
+            if (g.includes("HUMAN") || g.includes("ARTS")) return "Humanities";
+            if (!g || g === "NAN" || g === "NONE" || g === "-" || g === "GENERAL") return "General";
+            return rawGrp ? (rawGrp.charAt(0).toUpperCase() + rawGrp.slice(1).toLowerCase()) : "General";
+        }
+
+        const coreGroups = ["Science", "Business Studies", "Humanities"];
+        const detectedExtra = [];
+        const failingStudents = [];
+
+        const oneFail = analysisData.one_subject_fail || {};
+        (oneFail.students || []).forEach(st => {
+            const grp = mapMatrixGroup(st.Group);
+            if (!coreGroups.includes(grp) && !detectedExtra.includes(grp)) detectedExtra.push(grp);
+            failingStudents.push({
+                fail_cnt: 1,
+                group: grp,
+                is_reg: (st.Type === "REGULAR")
+            });
+        });
+
+        const twoFail = analysisData.two_subject_fail || {};
+        (twoFail.students || []).forEach(st => {
+            const grp = mapMatrixGroup(st.Group);
+            if (!coreGroups.includes(grp) && !detectedExtra.includes(grp)) detectedExtra.push(grp);
+            failingStudents.push({
+                fail_cnt: 2,
+                group: grp,
+                is_reg: (st.Type === "REGULAR")
+            });
+        });
+
+        const multiFail = analysisData.multi_subject_fail || {};
+        (multiFail.students || []).forEach(st => {
+            const grp = mapMatrixGroup(st.Group);
+            if (!coreGroups.includes(grp) && !detectedExtra.includes(grp)) detectedExtra.push(grp);
+            let cnt = st.Failed_Count;
+            if (!cnt && Array.isArray(st.Failed_Subjects)) cnt = st.Failed_Subjects.length;
+            if (!cnt || cnt < 3) cnt = 3;
+            failingStudents.push({
+                fail_cnt: cnt,
+                group: grp,
+                is_reg: (st.Type === "REGULAR")
+            });
+        });
+
+        const allGroups = coreGroups.concat(detectedExtra.sort());
+
+        const rowSpecs = [
+            { key: "one_subject", label: "One Subject", pred: c => c === 1 },
+            { key: "two_subject", label: "Two Subject", pred: c => c === 2 },
+            { key: "three_subject", label: "Three Subject", pred: c => c === 3 },
+            { key: "four_subject", label: "Four Subject", pred: c => c === 4 },
+            { key: "five_plus_subject", label: "Five or more Subject", pred: c => c >= 5 },
+        ];
+
+        const matrixRows = rowSpecs.map(spec => {
+            const counts = {};
+            let rowSubReg = 0;
+            let rowSubIrreg = 0;
+            allGroups.forEach(grp => {
+                const regC = failingStudents.filter(s => spec.pred(s.fail_cnt) && s.group === grp && s.is_reg).length;
+                const irregC = failingStudents.filter(s => spec.pred(s.fail_cnt) && s.group === grp && !s.is_reg).length;
+                counts[grp] = { regular: regC, irregular: irregC, total: regC + irregC };
+                rowSubReg += regC;
+                rowSubIrreg += irregC;
+            });
+            const rowTot = rowSubReg + rowSubIrreg;
+            return {
+                key: spec.key,
+                label: spec.label,
+                counts,
+                subtotal: { regular: rowSubReg, irregular: rowSubIrreg, total: rowTot },
+                total: rowTot
+            };
+        });
+
+        const subtotalCounts = {};
+        let grandSubReg = 0;
+        let grandSubIrreg = 0;
+        allGroups.forEach(grp => {
+            const gReg = matrixRows.reduce((acc, r) => acc + (r.counts[grp]?.regular || 0), 0);
+            const gIrreg = matrixRows.reduce((acc, r) => acc + (r.counts[grp]?.irregular || 0), 0);
+            subtotalCounts[grp] = { regular: gReg, irregular: gIrreg, total: gReg + gIrreg };
+            grandSubReg += gReg;
+            grandSubIrreg += gIrreg;
+        });
+
+        const grandTotal = grandSubReg + grandSubIrreg;
+
+        const subtotalRow = {
+            label: "SubTotal",
+            counts: subtotalCounts,
+            subtotal: { regular: grandSubReg, irregular: grandSubIrreg, total: grandTotal },
+            total: grandTotal
+        };
+
+        const totalCounts = {};
+        allGroups.forEach(grp => {
+            totalCounts[grp] = subtotalCounts[grp].total;
+        });
+
+        const totalRow = {
+            label: "Total",
+            counts: totalCounts,
+            subtotal: grandTotal,
+            total: grandTotal
+        };
+
+        return {
+            groups: allGroups,
+            rows: matrixRows,
+            subtotal_row: subtotalRow,
+            total_row: totalRow
+        };
+    }
+
+    function renderFailSummaryMatrix(matrixData, analysisData) {
+        const tableEl = document.getElementById("failSummaryMatrixTable");
+        const totalSummaryEl = document.getElementById("failMatrixTotalSummary");
+        const copyBtn = document.getElementById("copyFailMatrixWordBtn");
+        const toast = document.getElementById("wordCopyToast");
+        const toastText = document.getElementById("wordCopyToastText");
+
+        if (!tableEl) return;
+
+        if (!matrixData || !matrixData.rows || matrixData.rows.length === 0) {
+            matrixData = buildFailSummaryMatrix(analysisData);
+        }
+
+        const groups = matrixData.groups || ["Science", "Business Studies", "Humanities"];
+        const rows = matrixData.rows || [];
+        const subtotalRow = matrixData.subtotal_row || {};
+        const totalRow = matrixData.total_row || {};
+
+        let groupThs1 = "";
+        let groupThs2 = "";
+
+        groups.forEach(grp => {
+            let textClass = "text-primary";
+            if (grp.includes("Bus") || grp.includes("Com")) textClass = "text-info";
+            else if (grp.includes("Hum") || grp.includes("Art")) textClass = "text-success";
+
+            groupThs1 += `<th colspan="2" class="text-center fw-bold py-2 ${textClass}" style="border: 1px solid #1e293b; background-color: #f8fafc; font-size: 0.92rem;">${grp}</th>`;
+            groupThs2 += `
+                <th class="text-center fw-semibold py-1.5 small text-primary" style="border: 1px solid #1e293b; min-width: 60px; background-color: #ffffff;">Regular</th>
+                <th class="text-center fw-semibold py-1.5 small text-warning text-dark" style="border: 1px solid #1e293b; min-width: 60px; background-color: #ffffff;">Irregular</th>
+            `;
+        });
+
+        const theadHtml = `
+            <thead style="border-bottom: 2px solid #1e293b;">
+                <tr style="background-color: #f1f5f9;">
+                    <th rowspan="2" class="text-start ps-3 align-middle fw-bold py-2 text-dark" style="border: 1px solid #1e293b; min-width: 140px; font-size: 0.95rem;">Fail Subject</th>
+                    ${groupThs1}
+                    <th colspan="2" class="text-center fw-bold py-2 text-dark" style="border: 1px solid #1e293b; background-color: #e2e8f0; font-size: 0.92rem;">SubTotal</th>
+                    <th rowspan="2" class="text-center align-middle fw-bold py-2 px-3 text-danger" style="border: 1px solid #1e293b; background-color: #fee2e2; min-width: 75px; font-size: 0.95rem;">Total</th>
+                </tr>
+                <tr style="background-color: #f8fafc; font-size: 0.82rem;">
+                    ${groupThs2}
+                    <th class="text-center fw-bold py-1.5 small text-dark" style="border: 1px solid #1e293b; min-width: 60px; background-color: #f1f5f9;">Regular</th>
+                    <th class="text-center fw-bold py-1.5 small text-dark" style="border: 1px solid #1e293b; min-width: 60px; background-color: #f1f5f9;">Irregular</th>
+                </tr>
+            </thead>
+        `;
+
+        let bodyRowsHtml = "";
+        rows.forEach(r => {
+            let grpTds = "";
+            groups.forEach(grp => {
+                const c = (r.counts && r.counts[grp]) ? r.counts[grp] : { regular: 0, irregular: 0, total: 0 };
+                grpTds += `
+                    <td class="text-center py-2 text-primary fw-medium" style="border: 1px solid #1e293b;">${c.regular || 0}</td>
+                    <td class="text-center py-2 text-warning text-dark fw-medium" style="border: 1px solid #1e293b;">${c.irregular || 0}</td>
+                `;
+            });
+            const sub = r.subtotal || { regular: 0, irregular: 0, total: 0 };
+            bodyRowsHtml += `
+                <tr>
+                    <td class="text-start ps-3 fw-semibold text-dark py-2" style="border: 1px solid #1e293b;">${r.label}</td>
+                    ${grpTds}
+                    <td class="text-center py-2 fw-bold text-dark" style="border: 1px solid #1e293b; background-color: #f8fafc;">${sub.regular || 0}</td>
+                    <td class="text-center py-2 fw-bold text-dark" style="border: 1px solid #1e293b; background-color: #f8fafc;">${sub.irregular || 0}</td>
+                    <td class="text-center py-2 fw-bold text-danger" style="border: 1px solid #1e293b; background-color: #fff1f2;">${r.total || 0}</td>
+                </tr>
+            `;
+        });
+
+        let stGrpTds = "";
+        groups.forEach(grp => {
+            const c = (subtotalRow.counts && subtotalRow.counts[grp]) ? subtotalRow.counts[grp] : { regular: 0, irregular: 0, total: 0 };
+            stGrpTds += `
+                <td class="text-center py-2 text-primary fw-bold" style="border: 1px solid #1e293b;">${c.regular || 0}</td>
+                <td class="text-center py-2 text-warning text-dark fw-bold" style="border: 1px solid #1e293b;">${c.irregular || 0}</td>
+            `;
+        });
+        const stSub = subtotalRow.subtotal || { regular: 0, irregular: 0, total: 0 };
+        const subtotalRowHtml = `
+            <tr style="background-color: #f1f5f9; font-weight: bold; border-top: 2px solid #1e293b;">
+                <td class="text-start ps-3 py-2 text-dark" style="border: 1px solid #1e293b;">SubTotal</td>
+                ${stGrpTds}
+                <td class="text-center py-2 text-dark fw-bold" style="border: 1px solid #1e293b; background-color: #e2e8f0;">${stSub.regular || 0}</td>
+                <td class="text-center py-2 text-dark fw-bold" style="border: 1px solid #1e293b; background-color: #e2e8f0;">${stSub.irregular || 0}</td>
+                <td class="text-center py-2 text-danger fw-bold" style="border: 1px solid #1e293b; background-color: #fee2e2;">${subtotalRow.total || 0}</td>
+            </tr>
+        `;
+
+        let totGrpTds = "";
+        groups.forEach(grp => {
+            const val = (totalRow.counts && totalRow.counts[grp] !== undefined) ? totalRow.counts[grp] : 0;
+            let textClass = "text-primary";
+            if (grp.includes("Bus") || grp.includes("Com")) textClass = "text-info";
+            else if (grp.includes("Hum") || grp.includes("Art")) textClass = "text-success";
+            totGrpTds += `
+                <td colspan="2" class="text-center py-2 ${textClass} fw-bold" style="border: 1px solid #1e293b;">${val}</td>
+            `;
+        });
+        const totalRowHtml = `
+            <tr style="background-color: #e2e8f0; font-weight: bold; border-top: 1.5px solid #1e293b; border-bottom: 2px solid #1e293b;">
+                <td class="text-start ps-3 py-2 text-dark" style="border: 1px solid #1e293b;">Total</td>
+                ${totGrpTds}
+                <td colspan="2" class="text-center py-2 text-dark fw-bold" style="border: 1px solid #1e293b; background-color: #cbd5e1;">${totalRow.subtotal || 0}</td>
+                <td class="text-center py-2 text-danger fw-bold fs-6" style="border: 1px solid #1e293b; background-color: #fecaca;">${totalRow.total || 0}</td>
+            </tr>
+        `;
+
+        tableEl.innerHTML = `${theadHtml}<tbody>${bodyRowsHtml}${subtotalRowHtml}${totalRowHtml}</tbody>`;
+
+        if (totalSummaryEl) {
+            totalSummaryEl.textContent = `Total Failed Students: ${totalRow.total || 0}`;
+        }
+
+        if (copyBtn) {
+            copyBtn.onclick = () => {
+                const html = `
+                    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%; max-width: 680px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; border: 1.5pt solid black; text-align: center;">
+                        ${tableEl.innerHTML}
+                    </table>
+                `;
+                const plainText = tableEl.innerText;
+
+                if (navigator.clipboard && window.ClipboardItem) {
+                    const item = new ClipboardItem({
+                        "text/html": new Blob([html], { type: "text/html" }),
+                        "text/plain": new Blob([plainText], { type: "text/plain" })
+                    });
+                    navigator.clipboard.write([item]).then(() => {
+                        showWordToast("Fail Subject Summary Matrix copied! Paste directly into Microsoft Word (Ctrl + V).");
+                    }).catch(() => fallbackCopy(html));
+                } else {
+                    fallbackCopy(html);
+                    showWordToast("Fail Subject Summary Matrix copied! Paste directly into Microsoft Word (Ctrl + V).");
+                }
+            };
+        }
+
+        function showWordToast(msg) {
+            if (toast) {
+                if (toastText) toastText.textContent = msg;
+                toast.classList.remove("d-none");
+                toast.classList.add("d-flex");
+                setTimeout(() => {
+                    toast.classList.remove("d-flex");
+                    toast.classList.add("d-none");
+                }, 3500);
+            }
+        }
+    }
+
+    function buildPrintFailSummaryMatrixHtml(matrixData) {
+        if (!matrixData || !matrixData.rows) return "";
+        const groups = matrixData.groups || ["Science", "Business Studies", "Humanities"];
+        const rows = matrixData.rows || [];
+        const subtotalRow = matrixData.subtotal_row || {};
+        const totalRow = matrixData.total_row || {};
+
+        let groupThs1 = "";
+        let groupThs2 = "";
+        groups.forEach(grp => {
+            groupThs1 += `<th colspan="2" style="border: 1px solid #000; padding: 4px; text-align: center; background-color: #f1f5f9; font-weight: 700; font-size: 8.5pt;">${grp}</th>`;
+            groupThs2 += `
+                <th style="border: 1px solid #000; padding: 3px; text-align: center; background-color: #ffffff; font-weight: 600; font-size: 7.5pt; width: 45px;">Regular</th>
+                <th style="border: 1px solid #000; padding: 3px; text-align: center; background-color: #ffffff; font-weight: 600; font-size: 7.5pt; width: 45px;">Irregular</th>
+            `;
+        });
+
+        let bodyRows = "";
+        rows.forEach(r => {
+            let grpTds = "";
+            groups.forEach(grp => {
+                const c = (r.counts && r.counts[grp]) ? r.counts[grp] : { regular: 0, irregular: 0, total: 0 };
+                grpTds += `
+                    <td style="border: 1px solid #000; padding: 3px; text-align: center; font-size: 8pt; color: #1d4ed8;">${c.regular || 0}</td>
+                    <td style="border: 1px solid #000; padding: 3px; text-align: center; font-size: 8pt; color: #b45309;">${c.irregular || 0}</td>
+                `;
+            });
+            const sub = r.subtotal || { regular: 0, irregular: 0, total: 0 };
+            bodyRows += `
+                <tr>
+                    <td style="border: 1px solid #000; padding: 3px 6px; text-align: left; font-weight: 600; font-size: 8pt;">${r.label}</td>
+                    ${grpTds}
+                    <td style="border: 1px solid #000; padding: 3px; text-align: center; font-weight: 700; font-size: 8pt; background-color: #f8fafc;">${sub.regular || 0}</td>
+                    <td style="border: 1px solid #000; padding: 3px; text-align: center; font-weight: 700; font-size: 8pt; background-color: #f8fafc;">${sub.irregular || 0}</td>
+                    <td style="border: 1px solid #000; padding: 3px; text-align: center; font-weight: 700; font-size: 8.5pt; color: #b91c1c; background-color: #fee2e2;">${r.total || 0}</td>
+                </tr>
+            `;
+        });
+
+        let stGrpTds = "";
+        groups.forEach(grp => {
+            const c = (subtotalRow.counts && subtotalRow.counts[grp]) ? subtotalRow.counts[grp] : { regular: 0, irregular: 0, total: 0 };
+            stGrpTds += `
+                <td style="border: 1px solid #000; padding: 3px; text-align: center; font-weight: 700; font-size: 8pt; color: #1d4ed8;">${c.regular || 0}</td>
+                <td style="border: 1px solid #000; padding: 3px; text-align: center; font-weight: 700; font-size: 8pt; color: #b45309;">${c.irregular || 0}</td>
+            `;
+        });
+        const stSub = subtotalRow.subtotal || { regular: 0, irregular: 0, total: 0 };
+
+        let totGrpTds = "";
+        groups.forEach(grp => {
+            const val = (totalRow.counts && totalRow.counts[grp] !== undefined) ? totalRow.counts[grp] : 0;
+            totGrpTds += `<td colspan="2" style="border: 1px solid #000; padding: 3px; text-align: center; font-weight: 700; font-size: 8.5pt; color: #0f172a;">${val}</td>`;
+        });
+
+        return `
+            <div style="page-break-inside: avoid; break-inside: avoid; margin-bottom: 14px;">
+                <div style="background-color: #0f172a; color: #ffffff; padding: 5px 12px; border-radius: 4px 4px 0 0; font-weight: 700; font-size: 9.5pt; text-transform: uppercase; letter-spacing: 0.3px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>Fail Subject Summary Matrix (Without 4th Subject)</span>
+                    <span style="background: #dc2626; padding: 2px 8px; border-radius: 3px; font-size: 8pt;">Official Board Classification</span>
+                </div>
+                <table style="width: 100%; border: 1.5px solid #000; border-collapse: collapse; background-color: #ffffff; font-family: Calibri, Arial, sans-serif;">
+                    <thead>
+                        <tr style="background-color: #f1f5f9;">
+                            <th rowspan="2" style="border: 1px solid #000; padding: 4px 6px; text-align: left; vertical-align: middle; font-weight: 700; font-size: 8.5pt; width: 130px;">Fail Subject</th>
+                            ${groupThs1}
+                            <th colspan="2" style="border: 1px solid #000; padding: 4px; text-align: center; background-color: #e2e8f0; font-weight: 700; font-size: 8.5pt;">SubTotal</th>
+                            <th rowspan="2" style="border: 1px solid #000; padding: 4px; text-align: center; vertical-align: middle; background-color: #fee2e2; font-weight: 700; font-size: 9pt; color: #b91c1c; width: 55px;">Total</th>
+                        </tr>
+                        <tr style="background-color: #f8fafc;">
+                            ${groupThs2}
+                            <th style="border: 1px solid #000; padding: 3px; text-align: center; background-color: #f1f5f9; font-weight: 700; font-size: 7.5pt; width: 45px;">Regular</th>
+                            <th style="border: 1px solid #000; padding: 3px; text-align: center; background-color: #f1f5f9; font-weight: 700; font-size: 7.5pt; width: 45px;">Irregular</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${bodyRows}
+                        <tr style="background-color: #f1f5f9; font-weight: bold; border-top: 1.5px solid #000;">
+                            <td style="border: 1px solid #000; padding: 3px 6px; text-align: left; font-size: 8pt;">SubTotal</td>
+                            ${stGrpTds}
+                            <td style="border: 1px solid #000; padding: 3px; text-align: center; font-size: 8pt; background-color: #e2e8f0;">${stSub.regular || 0}</td>
+                            <td style="border: 1px solid #000; padding: 3px; text-align: center; font-size: 8pt; background-color: #e2e8f0;">${stSub.irregular || 0}</td>
+                            <td style="border: 1px solid #000; padding: 3px; text-align: center; font-size: 9pt; color: #b91c1c; background-color: #fee2e2;">${subtotalRow.total || 0}</td>
+                        </tr>
+                        <tr style="background-color: #e2e8f0; font-weight: bold; border-top: 1px solid #000;">
+                            <td style="border: 1px solid #000; padding: 3px 6px; text-align: left; font-size: 8pt;">Total</td>
+                            ${totGrpTds}
+                            <td colspan="2" style="border: 1px solid #000; padding: 3px; text-align: center; font-size: 8.5pt; background-color: #cbd5e1;">${totalRow.subtotal || 0}</td>
+                            <td style="border: 1px solid #000; padding: 3px; text-align: center; font-size: 9.5pt; color: #b91c1c; background-color: #fecaca;">${totalRow.total || 0}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
     function renderSubjectFailTables(failTablesData, analysisData) {
         const container = document.getElementById("failTablesContainer");
         const categoryFilter = document.getElementById("failTablesCategoryFilter");
@@ -1981,6 +2429,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         const toastText = document.getElementById("wordCopyToastText");
 
         if (!container) return;
+
+        // Render Primary Fail Subject Summary Matrix (At First)
+        renderFailSummaryMatrix(analysisData.fail_subject_summary_matrix, analysisData);
 
         failTablesData = buildFailTablesData(analysisData);
 
@@ -2033,6 +2484,26 @@ document.addEventListener("DOMContentLoaded", async () => {
             container.innerHTML = "";
             const selectedCategory = categoryFilter ? categoryFilter.value : "ALL";
             const selectedGroup = groupFilter ? groupFilter.value : "ALL";
+            const matrixCard = document.getElementById("failSummaryMatrixCard");
+            const breakdownHeading = document.getElementById("failSubjBreakdownHeading");
+
+            if (selectedCategory === "summary_matrix") {
+                if (matrixCard) matrixCard.classList.remove("d-none");
+                if (breakdownHeading) breakdownHeading.classList.add("d-none");
+                container.innerHTML = `
+                    <div class="col-12 text-center py-4 text-muted small fst-italic">
+                        <i class="bi bi-info-circle me-1 text-primary"></i> Fail Subject Summary Matrix displayed above. Select "All Categories" or a specific fail category to view detailed subject-wise breakdown tables.
+                    </div>
+                `;
+                if (countBadge) countBadge.textContent = "1 Matrix Table Displayed";
+                return;
+            } else if (selectedCategory === "ALL") {
+                if (matrixCard) matrixCard.classList.remove("d-none");
+                if (breakdownHeading) breakdownHeading.classList.remove("d-none");
+            } else {
+                if (matrixCard) matrixCard.classList.add("d-none");
+                if (breakdownHeading) breakdownHeading.classList.remove("d-none");
+            }
 
             let tableCount = 0;
 
@@ -2212,19 +2683,36 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         if (copyAllBtn) {
             copyAllBtn.onclick = () => {
+                const matrixTable = document.getElementById("failSummaryMatrixTable");
                 const tables = container.querySelectorAll(".word-format-table");
-                if (tables.length === 0) return;
+                if (!matrixTable && tables.length === 0) return;
 
                 let combinedHtml = "";
-                tables.forEach(t => {
+                const selectedCategory = categoryFilter ? categoryFilter.value : "ALL";
+                if (matrixTable && (selectedCategory === "ALL" || selectedCategory === "summary_matrix")) {
                     combinedHtml += `
                         <div style="margin-bottom: 24px;">
-                            <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%; max-width: 580px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; border: 1.5pt solid black;">
-                                ${t.innerHTML}
+                            <div style="font-family: Calibri, Arial, sans-serif; font-size: 13pt; font-weight: bold; margin-bottom: 6px; color: #0f172a;">
+                                Fail Subject Summary Analysis (Without 4th Subject)
+                            </div>
+                            <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%; max-width: 680px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; border: 1.5pt solid black; text-align: center;">
+                                ${matrixTable.innerHTML}
                             </table>
                         </div>
                     `;
-                });
+                }
+
+                if (selectedCategory !== "summary_matrix") {
+                    tables.forEach(t => {
+                        combinedHtml += `
+                            <div style="margin-bottom: 24px;">
+                                <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%; max-width: 580px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; border: 1.5pt solid black;">
+                                    ${t.innerHTML}
+                                </table>
+                            </div>
+                        `;
+                    });
+                }
 
                 if (navigator.clipboard && window.ClipboardItem) {
                     const item = new ClipboardItem({
@@ -2897,8 +3385,81 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 
     // ==========================================
+    // ==========================================
     // INSTITUTION DETAILS RESOLVER (NAME, ADDRESS, EIIN)
     // ==========================================
+    const KNOWN_INSTITUTIONS_MAP = {
+        "132092": { name: "CUMILLA SHIKKHA BOARD GOVT. MODEL COLLEGE", address: "Kotbari Road, Cumilla Sadar, Cumilla - 3500, Bangladesh", eiin: "132092" },
+        "105820": { name: "COMILLA AJIT GUHA COLLEGE", address: "Chawkbazar, Cumilla Sadar, Cumilla - 3500, Bangladesh", eiin: "105820" },
+        "105814": { name: "CUMILLA VICTORIA GOVT. COLLEGE", address: "Victoria College Road, Cumilla Sadar, Cumilla - 3500, Bangladesh", eiin: "105814" },
+        "105786": { name: "CUMILLA ZILLA SCHOOL", address: "Kandirpar, Cumilla Sadar, Cumilla, Bangladesh", eiin: "105786" },
+        "107977": { name: "DHAKA COLLEGE", address: "Mirpur Road, Dhanmondi, Dhaka - 1205, Bangladesh", eiin: "107977" },
+        "107975": { name: "DHAKA CITY COLLEGE", address: "Road No 2, Dhanmondi, Dhaka - 1205, Bangladesh", eiin: "107975" },
+        "108274": { name: "NOTRE DAME COLLEGE", address: "Toyenbee Circular Road, Motijheel, Dhaka - 1000, Bangladesh", eiin: "108274" },
+        "108573": { name: "RAJUK UTTARA MODEL COLLEGE", address: "Sector-6, Uttara Model Town, Dhaka - 1230, Bangladesh", eiin: "108573" },
+        "107845": { name: "ADAMJEE CANTONMENT COLLEGE", address: "Dhaka Cantonment, Dhaka - 1206, Bangladesh", eiin: "107845" },
+        "108348": { name: "VIQARUNNISA NOON COLLEGE", address: "1/A Bailey Road, Ramna, Dhaka - 1000, Bangladesh", eiin: "108348" },
+        "108272": { name: "HOLY CROSS COLLEGE", address: "Tejgaon, Dhaka - 1215, Bangladesh", eiin: "108272" },
+        "108035": { name: "GOVT. SCIENCE COLLEGE", address: "Farmgate, Tejgaon, Dhaka - 1215, Bangladesh", eiin: "108035" },
+        "132140": { name: "MOHAMMADPUR GOVT. COLLEGE", address: "Satmasjid Road, Mohammadpur, Dhaka - 1207, Bangladesh", eiin: "132140" },
+        "133008": { name: "CHITTAGONG COLLEGE", address: "College Road, Chawkbazar, Chattogram - 4203, Bangladesh", eiin: "133008" },
+        "126490": { name: "RAJSHAHI COLLEGE", address: "Boalia, Rajshahi - 6000, Bangladesh", eiin: "126490" },
+        "100742": { name: "GOVT. BRAJOMOHUN (BM) COLLEGE", address: "College Road, Barishal - 8200, Bangladesh", eiin: "100742" },
+        "130456": { name: "MURARI CHAND (MC) COLLEGE", address: "Tilagarh, Sylhet - 3100, Bangladesh", eiin: "130456" },
+        "127485": { name: "CARMICHAEL COLLEGE", address: "Lalbag, Rangpur - 5400, Bangladesh", eiin: "127485" },
+        "117106": { name: "GOVT. BRAJALAL (BL) COLLEGE", address: "Daulatpur, Khulna - 9202, Bangladesh", eiin: "117106" },
+        "111831": { name: "GOVT. ANANDA MOHAN COLLEGE", address: "College Road, Mymensingh - 2200, Bangladesh", eiin: "111831" },
+        "106579": { name: "FENI GOVT. COLLEGE", address: "College Road, Feni - 3900, Bangladesh", eiin: "106579" },
+        "103284": { name: "BRAHMANBARIA GOVT. COLLEGE", address: "College Road, Brahmanbaria - 3400, Bangladesh", eiin: "103284" },
+        "103597": { name: "CHANDPUR GOVT. COLLEGE", address: "Stadium Road, Chandpur - 3600, Bangladesh", eiin: "103597" },
+        "107541": { name: "NOAKHALI GOVT. COLLEGE", address: "Maijdee Court, Noakhali - 3800, Bangladesh", eiin: "107541" },
+        "107386": { name: "BANDERHAT HIGH SCHOOL & COLLEGE", address: "Banderhat, Lakshmipur, Bangladesh", eiin: "107386" },
+        "115957": { name: "GOVT. M. M. COLLEGE, JASHORE", address: "Kharki, Jashore - 7400, Bangladesh", eiin: "115957" },
+        "120583": { name: "DINAJPUR GOVT. COLLEGE", address: "Sadar, Dinajpur - 5200, Bangladesh", eiin: "120583" },
+        "108156": { name: "GOVT. MADRASA-E-ALIA DHAKA", address: "Bakshibazar, Dhaka - 1211, Bangladesh", eiin: "108156" },
+        "108036": { name: "DHAKA POLYTECHNIC INSTITUTE", address: "Tejgaon I/A, Dhaka - 1208, Bangladesh", eiin: "108036" }
+    };
+
+    const BOARD_FALLBACKS = {
+        "dhaka": { name: "DHAKA COLLEGE", address: "Mirpur Road, Dhanmondi, Dhaka - 1205, Bangladesh", eiin: "107977" },
+        "cumilla": { name: "CUMILLA SHIKKHA BOARD GOVT. MODEL COLLEGE", address: "Kotbari Road, Cumilla Sadar, Cumilla - 3500, Bangladesh", eiin: "132092" },
+        "comilla": { name: "CUMILLA SHIKKHA BOARD GOVT. MODEL COLLEGE", address: "Kotbari Road, Cumilla Sadar, Cumilla - 3500, Bangladesh", eiin: "132092" },
+        "chittagong": { name: "CHITTAGONG COLLEGE", address: "College Road, Chawkbazar, Chattogram - 4203, Bangladesh", eiin: "133008" },
+        "chattogram": { name: "CHITTAGONG COLLEGE", address: "College Road, Chawkbazar, Chattogram - 4203, Bangladesh", eiin: "133008" },
+        "rajshahi": { name: "RAJSHAHI COLLEGE", address: "Boalia, Rajshahi - 6000, Bangladesh", eiin: "126490" },
+        "barisal": { name: "GOVT. BRAJOMOHUN (BM) COLLEGE", address: "College Road, Barishal - 8200, Bangladesh", eiin: "100742" },
+        "barishal": { name: "GOVT. BRAJOMOHUN (BM) COLLEGE", address: "College Road, Barishal - 8200, Bangladesh", eiin: "100742" },
+        "sylhet": { name: "MURARI CHAND (MC) COLLEGE", address: "Tilagarh, Sylhet - 3100, Bangladesh", eiin: "130456" },
+        "dinajpur": { name: "DINAJPUR GOVT. COLLEGE", address: "Sadar, Dinajpur - 5200, Bangladesh", eiin: "120583" },
+        "jessore": { name: "GOVT. M. M. COLLEGE, JASHORE", address: "Kharki, Jashore - 7400, Bangladesh", eiin: "115957" },
+        "jashore": { name: "GOVT. M. M. COLLEGE, JASHORE", address: "Kharki, Jashore - 7400, Bangladesh", eiin: "115957" },
+        "mymensingh": { name: "GOVT. ANANDA MOHAN COLLEGE", address: "College Road, Mymensingh - 2200, Bangladesh", eiin: "111831" },
+        "madrasah": { name: "GOVT. MADRASA-E-ALIA DHAKA", address: "Bakshibazar, Dhaka - 1211, Bangladesh", eiin: "108156" },
+        "technical": { name: "DHAKA POLYTECHNIC INSTITUTE", address: "Tejgaon I/A, Dhaka - 1208, Bangladesh", eiin: "108036" }
+    };
+
+    function normalizeInstKey(name) {
+        return (name || "").toString().toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+    }
+
+    function getSavedEiinOverride(instName) {
+        try {
+            const key = normalizeInstKey(instName);
+            if (!key) return "";
+            return localStorage.getItem(`eiin_override::${key}`) || "";
+        } catch (e) { return ""; }
+    }
+
+    function saveEiinOverride(instName, eiin) {
+        try {
+            const key = normalizeInstKey(instName);
+            if (!key) return;
+            if (eiin && /^\d{4,8}$/.test(eiin)) {
+                localStorage.setItem(`eiin_override::${key}`, eiin);
+            }
+        } catch (e) {}
+    }
+
     function getInstitutionHeaderDetails(analysisData, metaInfo) {
         let rawInstitute = "";
         if (analysisData && analysisData.institute) {
@@ -2915,13 +3476,80 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (found) rawInstitute = found.Institute;
         }
 
-        const boardName = (metaInfo && metaInfo.board) ? metaInfo.board : (analysisData && analysisData.summary && analysisData.summary.board) || "Cumilla";
-        const cleanBoard = boardName.replace(/\s*\(Fast Server\)/i, "").replace(/\s*\(.*\)/, "").trim() || "Board";
+        const dataBoard = (analysisData && (analysisData.board || (analysisData.summary && analysisData.summary.board))) || "";
+        const metaBoard = (metaInfo && metaInfo.board && !/\.(csv|xlsx|xls)$/i.test(metaInfo.board)) ? metaInfo.board : "";
+        const boardName = dataBoard || metaBoard || "";
+        const cleanBoard = boardName.replace(/\s*\(Fast Server\)/i, "").replace(/\s*\(.*\)/, "").trim();
+        const bKey = cleanBoard.toLowerCase();
+        const defaultForBoard = BOARD_FALLBACKS[bKey] || null;
 
         let instituteName = "";
         let eiin = (analysisData && (analysisData.eiin || (analysisData.summary && analysisData.summary.eiin))) || (metaInfo && metaInfo.eiin) || "";
-        let address = "";
+        eiin = (eiin || "").toString().trim();
+        if (["nan", "none", "n/a", "-", "null", "undefined"].includes(eiin.toLowerCase())) eiin = "";
+        let address = (analysisData && (analysisData.address || (analysisData.summary && analysisData.summary.address))) || "";
+        address = (address || "").toString().trim();
+        if (["nan", "none", "n/a", "-", "null", "undefined"].includes(address.toLowerCase())) address = "";
 
+        // 1. Check if rawInstitute has embedded digits like "(105963) ..." or "105963 - ..."
+        if (rawInstitute && rawInstitute.trim()) {
+            const str = rawInstitute.trim();
+            const eiinMatch = str.match(/\(?\b(\d{5,7})\b\)?/);
+            if (eiinMatch) {
+                if (!eiin) eiin = eiinMatch[1];
+                instituteName = str.replace(/\(?\b\d{5,7}\b\)?/g, "").replace(/[-()]/g, " ").replace(/\s+/g, " ").trim();
+            } else {
+                instituteName = str;
+            }
+        }
+
+        // 2. Check student records for EIIN if not on summary
+        if (!eiin && analysisData) {
+            const studentLists = [
+                analysisData.merit_list?.students,
+                analysisData.one_subject_fail?.students,
+                analysisData.two_subject_fail?.students,
+                analysisData.absent_analysis?.students
+            ];
+            for (const list of studentLists) {
+                if (Array.isArray(list) && list.length > 0) {
+                    const st = list.find(s => s && (s.EIIN || s.eiin) && !["", "nan", "none", "n/a", "-"].includes(String(s.EIIN || s.eiin).trim().toLowerCase()));
+                    if (st) {
+                        eiin = (st.EIIN || st.eiin).toString().trim();
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 3. Check per-institution saved EIIN override (never leak another institution's sessionStorage EIIN!)
+        if (!eiin && instituteName) {
+            eiin = getSavedEiinOverride(instituteName);
+        }
+
+        // 4. If EIIN is in KNOWN_INSTITUTIONS_MAP, use its address if backend didn't provide one
+        if (eiin && KNOWN_INSTITUTIONS_MAP[eiin]) {
+            const match = KNOWN_INSTITUTIONS_MAP[eiin];
+            return {
+                instituteName: instituteName || match.name,
+                eiin: eiin,
+                address: address || match.address
+            };
+        }
+
+        // 5. Match exact known institution name if still no EIIN
+        const searchTarget = ((instituteName || "") + " " + (rawInstitute || "")).toUpperCase();
+        if (!eiin && instituteName) {
+            for (const [k, v] of Object.entries(KNOWN_INSTITUTIONS_MAP)) {
+                if (searchTarget.includes(v.name)) {
+                    eiin = k;
+                    if (!address) address = v.address;
+                    break;
+                }
+            }
+        }
+
+        // 6. District matching for address
         const bdDistricts = [
             "Bagerhat", "Bandarban", "Barguna", "Barishal", "Barisal", "Bhola", "Bogra", "Bogura", "Brahmanbaria", 
             "Chandpur", "Chattogram", "Chittagong", "Chuadanga", "Comilla", "Cumilla", "Cox's Bazar", 
@@ -2934,111 +3562,29 @@ document.addEventListener("DOMContentLoaded", async () => {
             "Rajshahi", "Rangamati", "Rangpur", "Satkhira", "Shariatpur", "Sherpur", "Sirajganj", 
             "Sunamganj", "Sylhet", "Tangail", "Thakurgaon"
         ];
-
-        if (rawInstitute && rawInstitute.trim()) {
-            const str = rawInstitute.trim();
-            const eiinMatch = str.match(/\(?\b(\d{5,7})\b\)?/);
-            if (eiinMatch) {
-                if (!eiin) eiin = eiinMatch[1];
-                instituteName = str.replace(/\(?\b\d{5,7}\b\)?/g, "").replace(/[-()]/g, " ").replace(/\s+/g, " ").trim();
-            } else {
-                instituteName = str;
-            }
-
-            let detectedDistrict = "";
+        if (!address && searchTarget) {
             for (const dist of bdDistricts) {
-                const regex = new RegExp(`\\b${dist}\\b`, "i");
-                if (regex.test(str)) {
-                    detectedDistrict = dist;
-                    break;
-                }
-            }
-
-            if (detectedDistrict) {
-                address = `${detectedDistrict}, Bangladesh`;
-            } else {
-                const bLow = cleanBoard.toLowerCase();
-                if (bLow.includes("cumilla") || bLow.includes("comilla")) {
-                    address = "Kotbari Road, Cumilla Sadar, Cumilla, Bangladesh";
-                } else if (bLow.includes("dhaka")) {
-                    address = "Dhaka - 1205, Bangladesh";
-                } else {
-                    address = `${cleanBoard} Education Board Region, Bangladesh`;
-                }
-            }
-        } else {
-            instituteName = `${cleanBoard} Academic Institution`;
-            address = `${cleanBoard}, Bangladesh`;
-        }
-
-        // Deep fallback resolution for EIIN from student records
-        if (!eiin && analysisData) {
-            const studentLists = [
-                analysisData.merit_list?.students,
-                analysisData.one_subject_fail?.students,
-                analysisData.two_subject_fail?.students,
-                analysisData.absent_analysis?.students
-            ];
-            for (const list of studentLists) {
-                if (Array.isArray(list) && list.length > 0) {
-                    const st = list.find(s => s && (s.EIIN || s.eiin));
-                    if (st) {
-                        eiin = (st.EIIN || st.eiin).toString().trim();
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Fallback from sessionStorage if populated from previous search
-        if (!eiin) {
-            try {
-                eiin = sessionStorage.getItem("last_eiin") || sessionStorage.getItem("eiin") || "";
-            } catch(e) {}
-        }
-
-        // Known institute mapping
-        const knownEiins = {
-            "DALTA": "105820",
-            "BANDERHAT": "107386",
-            "CUMILLA GOVT": "105820",
-            "COMILLA GOVT": "105820",
-            "DHAKA CITY": "107977",
-            "NOTRE DAME": "108274",
-            "RAJUK": "108573",
-            "ADAMJEE": "107845",
-            "VIQARUNNISA": "108348",
-            "HOLY CROSS": "108272",
-            "CHITTAGONG COLLEGE": "133008",
-            "SCIENCE COLLEGE": "108035",
-            "MOHAMMADPUR": "132140"
-        };
-        const searchTarget = ((instituteName || "") + " " + (rawInstitute || "")).toUpperCase();
-        if (!eiin) {
-            for (const [k, v] of Object.entries(knownEiins)) {
-                if (searchTarget.includes(k)) {
-                    eiin = v;
+                if (new RegExp(`\\b${dist}\\b`, "i").test(searchTarget)) {
+                    const disp = dist.toLowerCase() === "comilla" ? "Cumilla" : (dist.toLowerCase() === "laxmipur" ? "Lakshmipur" : dist);
+                    address = `${disp}, Bangladesh`;
                     break;
                 }
             }
         }
 
-        // Board standard default
-        if (!eiin) {
-            const bLow = cleanBoard.toLowerCase();
-            if (bLow.includes("cumilla") || bLow.includes("comilla")) {
-                eiin = "105820";
-            } else if (bLow.includes("dhaka")) {
-                eiin = "107977";
-            } else {
-                eiin = "105820";
-            }
+        // 7. Never assign another college's EIIN if an institution name is present
+        if (!instituteName && defaultForBoard) {
+            instituteName = defaultForBoard.name;
+            if (!eiin) eiin = defaultForBoard.eiin;
+            if (!address) address = defaultForBoard.address;
+        } else if (!address) {
+            address = cleanBoard ? `${cleanBoard}, Bangladesh` : "Bangladesh";
         }
 
         return {
-            instituteName: instituteName || `${cleanBoard} Academic Institution`,
-            eiin: eiin || "105820",
-            address: address || `${cleanBoard}, Bangladesh`
+            instituteName: instituteName || (cleanBoard ? `${cleanBoard} Academic Institution` : "Academic Institution"),
+            eiin: eiin,
+            address: address
         };
     }
 
@@ -3092,10 +3638,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             let totReg = 0, totIrreg = 0, totAll = 0;
             if (entries.length === 0) {
                 rows = `<tr>
-                    <td style="border: 1px solid #000; padding: 3px 6px; text-align: left; color: #64748b; font-style: italic; padding-left: 8px;">No failures recorded</td>
-                    <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #64748b;">0</td>
-                    <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #64748b;">0</td>
-                    <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #64748b;">0</td>
+                    <td style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; color: #64748b; font-style: italic; padding-left: 8px;">No failures recorded</td>
+                    <td style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: center; color: #64748b;">0</td>
+                    <td style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: center; color: #64748b;">0</td>
+                    <td style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: center; color: #64748b;">0</td>
                 </tr>`;
             } else {
                 entries.forEach(([s, item]) => {
@@ -3105,38 +3651,38 @@ document.addEventListener("DOMContentLoaded", async () => {
                     totReg += reg; totIrreg += irreg; totAll += tot;
 
                     rows += `<tr>
-                        <td style="border: 1px solid #000; padding: 3px 6px; text-align: left; font-weight: 600; color: #0f172a; padding-left: 8px;">${s}</td>
-                        <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #1d4ed8; font-weight: 600;">${reg}</td>
-                        <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; color: #b45309; font-weight: 600;">${irreg}</td>
-                        <td style="border: 1px solid #000; padding: 3px 6px; text-align: center; font-weight: 700; color: #b91c1c;">${tot}</td>
+                        <td style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; font-weight: 600; color: #0f172a; padding-left: 8px;">${s}</td>
+                        <td style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: center; color: #1d4ed8; font-weight: 600;">${reg}</td>
+                        <td style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: center; color: #b45309; font-weight: 600;">${irreg}</td>
+                        <td style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: center; font-weight: 700; color: #b91c1c;">${tot}</td>
                     </tr>`;
                 });
             }
 
             return `
                 <div class="fail-main-card" style="page-break-inside: avoid; break-inside: avoid; width: 100%; box-sizing: border-box;">
-                    <table class="table-fail-clean" style="width: 100% !important; border: 1.5px solid #000 !important; border-collapse: collapse !important; font-size: 8.5pt !important; margin-bottom: 0 !important; background-color: #ffffff !important; font-family: Calibri, Arial, sans-serif !important;">
+                    <table class="table-fail-clean" style="width: 100% !important; border: 1.5px solid #cbd5e1 !important; border-collapse: collapse !important; font-size: 8.5pt !important; margin-bottom: 0 !important; background-color: #ffffff !important;">
                         <thead>
                             <tr style="background-color: #f1f5f9;">
-                                <th colspan="4" class="fail-main-scope-header" style="border: 1px solid #000 !important; padding: 4px 6px !important; text-align: center !important; font-weight: 700 !important; font-size: 9.5pt !important; color: #0f172a !important; background-color: #f1f5f9 !important; text-transform: none !important; letter-spacing: normal !important;">${scopeTitle}</th>
+                                <th colspan="4" class="fail-main-scope-header" style="border: 1px solid #cbd5e1 !important; padding: 5px 6px !important; text-align: center !important; font-weight: 700 !important; font-size: 9pt !important; color: #0f2942 !important; background-color: #f1f5f9 !important; text-transform: none !important; letter-spacing: normal !important;">${scopeTitle}</th>
                             </tr>
                             <tr style="background-color: #ffffff;">
-                                <th colspan="4" class="fail-main-cat-header" style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: center !important; font-weight: 600 !important; font-size: 8pt !important; color: #334155 !important; background-color: #ffffff !important; text-transform: none !important; letter-spacing: normal !important;">${categoryTitle}</th>
+                                <th colspan="4" class="fail-main-cat-header" style="border: 1px solid #cbd5e1 !important; padding: 4px 6px !important; text-align: center !important; font-weight: 600 !important; font-size: 8pt !important; color: #475569 !important; background-color: #ffffff !important; text-transform: none !important; letter-spacing: normal !important;">${categoryTitle}</th>
                             </tr>
-                            <tr style="background-color: #f8fafc;">
-                                <th class="fail-main-col-header" style="border: 1px solid #000 !important; border-bottom: 1.5px solid #000 !important; width: 44%; text-align: left !important; padding: 3px 6px !important; padding-left: 8px !important; font-weight: 700 !important; font-size: 8pt !important; color: #0f172a !important; background-color: #f8fafc !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Subject</th>
-                                <th class="fail-main-col-header" style="border: 1px solid #000 !important; border-bottom: 1.5px solid #000 !important; width: 18%; text-align: center !important; padding: 3px 6px !important; font-weight: 700 !important; font-size: 8pt !important; color: #0f172a !important; background-color: #f8fafc !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Regular</th>
-                                <th class="fail-main-col-header" style="border: 1px solid #000 !important; border-bottom: 1.5px solid #000 !important; width: 18%; text-align: center !important; padding: 3px 6px !important; font-weight: 700 !important; font-size: 8pt !important; color: #0f172a !important; background-color: #f8fafc !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Irregular</th>
-                                <th class="fail-main-col-header" style="border: 1px solid #000 !important; border-bottom: 1.5px solid #000 !important; width: 20%; text-align: center !important; padding: 3px 6px !important; font-weight: 700 !important; font-size: 8pt !important; color: #0f172a !important; background-color: #f8fafc !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Total</th>
+                            <tr style="background-color: #1e3a5f;">
+                                <th class="fail-main-col-header" style="border: 1px solid #334155 !important; width: 44%; text-align: left !important; padding: 5px 6px !important; padding-left: 8px !important; font-weight: 700 !important; font-size: 7.8pt !important; color: #ffffff !important; background-color: #1e3a5f !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Subject</th>
+                                <th class="fail-main-col-header" style="border: 1px solid #334155 !important; width: 18%; text-align: center !important; padding: 5px 6px !important; font-weight: 700 !important; font-size: 7.8pt !important; color: #ffffff !important; background-color: #1e3a5f !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Regular</th>
+                                <th class="fail-main-col-header" style="border: 1px solid #334155 !important; width: 18%; text-align: center !important; padding: 5px 6px !important; font-weight: 700 !important; font-size: 7.8pt !important; color: #ffffff !important; background-color: #1e3a5f !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Irregular</th>
+                                <th class="fail-main-col-header" style="border: 1px solid #334155 !important; width: 20%; text-align: center !important; padding: 5px 6px !important; font-weight: 700 !important; font-size: 7.8pt !important; color: #ffffff !important; background-color: #1e3a5f !important; text-transform: uppercase !important; letter-spacing: 0.3px !important;">Total</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${rows}
-                            <tr style="background-color: #f8fafc; font-weight: 700; border-top: 1.5px solid #000;">
-                                <td style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: left !important; padding-left: 8px !important; font-weight: 700; background-color: #f8fafc;">Total</td>
-                                <td style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: center !important; color: #1d4ed8; font-weight: 700; background-color: #f8fafc;">${totReg}</td>
-                                <td style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: center !important; color: #b45309; font-weight: 700; background-color: #f8fafc;">${totIrreg}</td>
-                                <td style="border: 1px solid #000 !important; padding: 3px 6px !important; text-align: center !important; color: #b91c1c; font-weight: 700; background-color: #f8fafc;">${totAll}</td>
+                            <tr style="background-color: #f8fafc; font-weight: 700; border-top: 1.5px solid #1e3a5f;">
+                                <td style="border: 1px solid #cbd5e1 !important; padding: 4px 6px !important; text-align: left !important; padding-left: 8px !important; font-weight: 700; background-color: #f8fafc; color: #0f172a;">Total</td>
+                                <td style="border: 1px solid #cbd5e1 !important; padding: 4px 6px !important; text-align: center !important; color: #1d4ed8; font-weight: 700; background-color: #f8fafc;">${totReg}</td>
+                                <td style="border: 1px solid #cbd5e1 !important; padding: 4px 6px !important; text-align: center !important; color: #b45309; font-weight: 700; background-color: #f8fafc;">${totIrreg}</td>
+                                <td style="border: 1px solid #cbd5e1 !important; padding: 4px 6px !important; text-align: center !important; color: #b91c1c; font-weight: 700; background-color: #f8fafc;">${totAll}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -3153,19 +3699,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             return `
                 <div class="report-subsection mb-3" style="page-break-inside: avoid; margin-bottom: 20px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #0f172a; padding-bottom: 4px; margin-bottom: 6px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #1e3a5f; padding-bottom: 5px; margin-bottom: 6px;">
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <span class="badge ${badgeClass}" style="font-size: 10px; padding: 3px 8px; font-weight: 700; text-transform: uppercase;">${badgeText}</span>
-                            <strong style="font-size: 11.5px; color: #0f172a; text-transform: uppercase; letter-spacing: 0.03em;">${subTitle}</strong>
+                            <span class="badge ${badgeClass}" style="font-size: 8pt; padding: 3px 8px; font-weight: 700; text-transform: uppercase;">${badgeText}</span>
+                            <strong style="font-size: 10pt; color: #0f2942; text-transform: uppercase; letter-spacing: 0.03em;">${subTitle}</strong>
                         </div>
-                        <div style="font-size: 10px; color: #475569;">
+                        <div style="font-size: 8.5pt; color: #475569;">
                             Subjects: <strong>${items.length}</strong> | Appeared: <strong>${totApp}</strong> | Passed: <strong style="color: #16a34a;">${totPass}</strong> | Failed: <strong style="color: #dc2626;">${totFail}</strong> | Pass Rate: <strong style="color: #2563eb;">${passRate}%</strong>
                         </div>
                     </div>
-                    ${desc ? `<div style="font-size: 9.5px; color: #64748b; margin-bottom: 6px;">${desc}</div>` : ""}
-                    <table class="table table-bordered table-sm text-center mb-2" style="font-size: 9.5px;">
+                    ${desc ? `<div style="font-size: 8.5pt; color: #64748b; margin-bottom: 6px;">${desc}</div>` : ""}
+                    <table class="table table-bordered table-sm text-center mb-2" style="font-size: 8.5pt;">
                         <thead>
-                            <tr style="background-color: #f8fafc;">
+                            <tr style="background-color: #1e3a5f; color: #ffffff;">
                                 <th class="text-start ps-2" style="width: 220px;">Subject Code & Name</th>
                                 <th style="width: 60px;">Appeared</th>
                                 <th style="width: 55px;">Passed</th>
@@ -3188,7 +3734,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                                     <td class="text-success fw-bold">${it.passed}</td>
                                     <td class="${it.failed > 0 ? 'text-danger fw-bold table-highlight-red' : 'text-muted'}">${it.failed}</td>
                                     <td class="fw-bold ${parseFloat(it.pass_rate) >= 80 ? 'text-success' : (parseFloat(it.pass_rate) < 50 ? 'text-danger' : 'text-primary')}">${it.pass_rate}%</td>
-                                    <td class="fw-bold text-warning ${(it.grades['A+'] || 0) > 0 ? 'table-highlight-gold' : ''}">${it.grades["A+"] || 0}</td>
+                                    <td class="fw-bold ${(it.grades['A+'] || 0) > 0 ? 'table-highlight-gold' : ''}">${it.grades["A+"] || 0}</td>
                                     <td>${it.grades["A"] || 0}</td>
                                     <td>${it.grades["A-"] || 0}</td>
                                     <td>${it.grades["B"] || 0}</td>
@@ -3203,10 +3749,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             `;
         }
 
+        const cleanBoard = (metaInfo && metaInfo.board ? metaInfo.board : "Board").replace(/\s*\(Fast Server\)/i, "").trim();
         const examLabel = [metaInfo && metaInfo.exam ? metaInfo.exam : "Analyzed File", metaInfo && metaInfo.year ? metaInfo.year : ""].filter(Boolean).join(" ").trim();
         const cleanInstName = (instDetails.instituteName || "Institution").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
-        const eiinVal = instDetails.eiin || "EIIN";
-        const saveReportTitle = `${eiinVal}, ${cleanInstName} Board Result Comprehensive Analysis Report - ${examLabel}`;
+        const eiinPrefix = instDetails.eiin ? `${instDetails.eiin}, ` : "";
+        const saveReportTitle = `${eiinPrefix}${cleanInstName} Board Result Comprehensive Analysis Report - ${examLabel}`;
+        const nowStr = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 
         const html = `
         <!DOCTYPE html>
@@ -3217,73 +3765,183 @@ document.addEventListener("DOMContentLoaded", async () => {
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
             <style>
-                @page { size: A4; margin: 10mm 8mm; }
+                @page {
+                    size: A4 portrait;
+                    margin: 10mm 9mm 12mm 9mm;
+                }
+                * {
+                    box-sizing: border-box;
+                }
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                    font-size: 11px;
+                    font-size: 9pt;
+                    line-height: 1.35;
                     color: #1e293b;
-                    background-color: #f8fafc;
-                    padding: 20px;
+                    background-color: #f1f5f9;
+                    padding: 18px 14px;
+                    margin: 0;
                     -webkit-print-color-adjust: exact !important;
                     print-color-adjust: exact !important;
                 }
                 .report-container {
-                    max-width: 1100px;
+                    max-width: 1080px;
                     margin: 0 auto;
                     background: #ffffff;
-                    padding: 25px 30px;
+                    padding: 22px 26px;
                     border-radius: 12px;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.06);
+                    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);
+                    border: 1px solid #e2e8f0;
                 }
-                .report-header {
-                    border-bottom: 2px solid #0f172a;
-                    padding-bottom: 15px;
-                    margin-bottom: 20px;
+                table.report-master-layout {
+                    width: 100% !important;
+                    border-collapse: collapse !important;
+                    border: none !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    background: transparent !important;
                 }
-                .section-title {
-                    font-size: 13px;
-                    font-weight: 700;
+                table.report-master-layout > thead {
+                    display: table-header-group !important;
+                }
+                table.report-master-layout > tfoot {
+                    display: table-footer-group !important;
+                }
+                table.report-master-layout > thead > tr > th,
+                table.report-master-layout > thead > tr > td,
+                table.report-master-layout > tbody > tr > td,
+                table.report-master-layout > tfoot > tr > th,
+                table.report-master-layout > tfoot > tr > td {
+                    border: none !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                    background: transparent !important;
+                    font-weight: normal;
+                    text-align: left;
+                }
+                .print-page-header {
+                    width: 100%;
+                    padding-bottom: 7px;
+                    margin-bottom: 11px;
+                    text-align: center;
+                }
+                .header-inst-name {
+                    font-size: 16.5pt;
+                    font-weight: 800;
+                    color: #0f2942;
+                    margin: 0 0 3px 0;
                     text-transform: uppercase;
                     letter-spacing: 0.5px;
-                    color: #0f172a;
+                    line-height: 1.2;
+                }
+                .header-inst-meta {
+                    font-size: 8.5pt;
+                    color: #334155;
+                    font-weight: 600;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    gap: 12px;
+                    flex-wrap: wrap;
+                    margin-top: 3px;
+                }
+                .meta-dot {
+                    color: #94a3b8;
+                    font-weight: bold;
+                }
+                .eiin-tag {
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                    font-size: 9pt;
+                    font-weight: 800;
+                    background: #e2e8f0;
+                    color: #0f2942;
+                    padding: 1px 7px;
+                    border-radius: 4px;
+                    letter-spacing: 0.5px;
+                    border: 1px solid #cbd5e1;
+                    display: inline-block;
+                }
+                .header-line {
+                    height: 2.5px;
+                    background: linear-gradient(90deg, #0f2942 0%, #1e3a5f 60%, #3b82f6 100%);
+                    margin-top: 8px;
+                    border-radius: 2px;
+                }
+                .print-page-footer {
+                    width: 100%;
+                    padding-top: 6px;
+                    margin-top: 10px;
+                }
+                .footer-line {
+                    height: 1.5px;
+                    background: #cbd5e1;
+                    margin-bottom: 5px;
+                }
+                .footer-row {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    font-size: 8.2pt;
+                    color: #475569;
+                }
+                .footer-brand {
+                    font-weight: 700;
+                    color: #0f2942;
+                    letter-spacing: 0.2px;
+                }
+                .footer-meta {
+                    color: #64748b;
+                    font-size: 8pt;
+                }
+                .report-header {
                     border-bottom: 1.5px solid #cbd5e1;
-                    padding-bottom: 6px;
-                    margin-top: 24px;
-                    margin-bottom: 12px;
+                    padding-bottom: 10px;
+                    margin-bottom: 14px;
+                }
+                .section-title {
+                    font-size: 11.5pt;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.4px;
+                    color: #0f2942;
+                    border-bottom: 1.5px solid #cbd5e1;
+                    padding-bottom: 5px;
+                    margin-top: 20px;
+                    margin-bottom: 10px;
                     display: flex;
                     align-items: center;
                     gap: 6px;
                 }
                 .section-desc {
-                    font-size: 10.5px;
+                    font-size: 8.5pt;
                     color: #64748b;
-                    margin-top: -8px;
-                    margin-bottom: 12px;
+                    margin-top: -6px;
+                    margin-bottom: 10px;
                 }
                 .kpi-card {
                     background: #ffffff;
                     border: 1px solid #e2e8f0;
                     border-radius: 8px;
-                    padding: 10px 12px;
+                    padding: 8px 10px;
                     text-align: center;
                     height: 100%;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
                 }
                 .kpi-card .kpi-num {
-                    font-size: 20px;
+                    font-size: 18px;
                     font-weight: 800;
                     line-height: 1.2;
-                    margin-top: 4px;
+                    margin-top: 3px;
                     margin-bottom: 2px;
                 }
                 .kpi-card .kpi-label {
-                    font-size: 9.5px;
+                    font-size: 8pt;
                     font-weight: 700;
                     text-transform: uppercase;
                     letter-spacing: 0.5px;
                     color: #64748b;
                 }
                 .kpi-card .kpi-sub {
-                    font-size: 9px;
+                    font-size: 7.5pt;
                     font-weight: 600;
                 }
                 .kpi-slate { border-top: 3px solid #475569; }
@@ -3303,35 +3961,37 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 table {
                     width: 100%;
-                    margin-bottom: 15px;
-                    font-size: 10px;
+                    margin-bottom: 14px;
+                    font-size: 8.5pt;
                     border-collapse: collapse;
                 }
                 th {
-                    background-color: #0f172a !important;
+                    background-color: #1e3a5f !important;
                     color: #ffffff !important;
                     font-weight: 600;
                     text-transform: uppercase;
-                    font-size: 9px;
+                    font-size: 7.8pt;
                     letter-spacing: 0.3px;
-                    padding: 6px 6px;
+                    padding: 5px 6px;
                     border: 1px solid #334155 !important;
                     text-align: center;
                     vertical-align: middle;
                 }
                 td {
-                    padding: 5px 6px;
-                    border: 1px solid #e2e8f0;
+                    padding: 4.5px 6px;
+                    border: 1px solid #cbd5e1;
                     text-align: center;
                     vertical-align: middle;
+                    color: #1e293b;
                 }
                 tbody tr:nth-child(even) { background-color: #f8fafc; }
-                .table-highlight-gold { background-color: #fef3c7 !important; font-weight: 700; color: #92400e; }
-                .table-highlight-red { background-color: #fee2e2 !important; font-weight: 700; color: #b91c1c; }
-                .table-highlight-green { background-color: #dcfce7 !important; font-weight: 700; color: #15803d; }
-                .table-fail-clean th.fail-main-scope-header { background-color: #f1f5f9 !important; color: #0f172a !important; }
-                .table-fail-clean th.fail-main-cat-header { background-color: #ffffff !important; color: #334155 !important; }
-                .table-fail-clean th.fail-main-col-header { background-color: #f8fafc !important; color: #0f172a !important; }
+                tbody tr:hover { background-color: #f1f5f9; }
+                .table-highlight-gold { background-color: #fef3c7 !important; font-weight: 700; color: #92400e; border: 1px solid #fde68a !important; }
+                .table-highlight-red { background-color: #fee2e2 !important; font-weight: 700; color: #b91c1c; border: 1px solid #fecaca !important; }
+                .table-highlight-green { background-color: #dcfce7 !important; font-weight: 700; color: #15803d; border: 1px solid #bbf7d0 !important; }
+                .table-fail-clean th.fail-main-scope-header { background-color: #f1f5f9 !important; color: #0f2942 !important; border: 1px solid #cbd5e1 !important; }
+                .table-fail-clean th.fail-main-cat-header { background-color: #ffffff !important; color: #475569 !important; border: 1px solid #cbd5e1 !important; }
+                .table-fail-clean th.fail-main-col-header { background-color: #1e3a5f !important; color: #ffffff !important; border: 1px solid #334155 !important; }
                 .fail-main-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; align-items: start; }
                 @media print {
                     .fail-main-grid { display: grid !important; grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
@@ -3339,63 +3999,856 @@ document.addEventListener("DOMContentLoaded", async () => {
                 .guide-box {
                     background-color: #f0fdf4;
                     border: 1px solid #bbf7d0;
+                    border-left: 3.5px solid #16a34a;
                     border-radius: 8px;
-                    padding: 12px 16px;
-                    margin-top: 15px;
-                    margin-bottom: 20px;
+                    padding: 10px 14px;
+                    margin-top: 12px;
+                    margin-bottom: 16px;
                 }
                 .guide-item {
-                    font-size: 10px;
-                    margin-bottom: 4px;
+                    font-size: 8.5pt;
+                    margin-bottom: 3px;
                     color: #1e3a24;
                 }
                 .badge-pill-custom {
-                    font-size: 9px;
+                    font-size: 8pt;
                     padding: 3px 8px;
                     border-radius: 12px;
                     font-weight: 600;
                     display: inline-block;
                 }
+                .signoff-section {
+                    margin-top: 30px;
+                    padding-top: 15px;
+                    border-top: 1px dashed #cbd5e1;
+                    font-size: 8.5pt;
+                    color: #475569;
+                    page-break-inside: avoid;
+                    break-inside: avoid;
+                }
+                .sign-line {
+                    border-top: 1.5px solid #0f2942;
+                    margin: 0 15px;
+                    padding-top: 4px;
+                    font-weight: 700;
+                    color: #0f2942;
+                }
+                /* ----------------------------------------------------
+                   COVER PAGE & INDEX PAGE STYLES (A4 Print-Optimized)
+                   ---------------------------------------------------- */
+                .pdf-cover-page {
+                    background: #ffffff;
+                    border: 2.5px solid #0f2942;
+                    border-radius: 8px;
+                    padding: 24px 22px 18px 22px;
+                    margin-bottom: 24px;
+                    box-shadow: 0 4px 15px rgba(15, 23, 42, 0.05);
+                    position: relative;
+                    box-sizing: border-box;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: space-between;
+                    min-height: 255mm;
+                    page-break-after: always;
+                    break-after: page;
+                }
+                .cover-inner-border {
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                    padding: 20px 18px 16px 18px;
+                    height: 100%;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: space-between;
+                    box-sizing: border-box;
+                }
+                .cover-seal-wrapper {
+                    text-align: center;
+                    margin-bottom: 10px;
+                }
+                .cover-seal-icon {
+                    width: 58px;
+                    height: 58px;
+                    margin: 0 auto 6px auto;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: linear-gradient(135deg, #0f2942 0%, #1e3a5f 100%);
+                    color: #f8fafc;
+                    border-radius: 50%;
+                    border: 2.5px double #d97706;
+                    box-shadow: 0 4px 10px rgba(15, 41, 66, 0.15);
+                }
+                .cover-org-label {
+                    font-size: 8pt;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 1.2px;
+                    color: #475569;
+                    margin-bottom: 3px;
+                }
+                .cover-status-badge {
+                    display: inline-block;
+                    background: #e0f2fe;
+                    color: #0369a1;
+                    border: 1px solid #bae6fd;
+                    font-size: 7.5pt;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.6px;
+                    padding: 2px 10px;
+                    border-radius: 12px;
+                }
+                .cover-inst-header {
+                    text-align: center;
+                    margin-top: 6px;
+                    margin-bottom: 10px;
+                }
+                .cover-inst-name {
+                    font-size: 19pt;
+                    font-weight: 800;
+                    color: #0f2942;
+                    text-transform: uppercase;
+                    letter-spacing: 0.6px;
+                    line-height: 1.2;
+                    margin: 0 0 5px 0;
+                }
+                .cover-inst-meta {
+                    font-size: 8.8pt;
+                    font-weight: 600;
+                    color: #334155;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                }
+                .cover-meta-dot {
+                    color: #94a3b8;
+                    font-weight: bold;
+                }
+                .cover-eiin-pill {
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                    font-size: 9pt;
+                    font-weight: 800;
+                    background: #0f2942;
+                    color: #ffffff;
+                    padding: 1px 7px;
+                    border-radius: 4px;
+                    letter-spacing: 0.5px;
+                }
+                .cover-divider-ribbon {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin: 12px 0 14px 0;
+                }
+                .cover-ribbon-line {
+                    flex-grow: 1;
+                    height: 2px;
+                    background: linear-gradient(90deg, transparent, #cbd5e1, #1e3a5f);
+                }
+                .cover-ribbon-line.right {
+                    background: linear-gradient(90deg, #1e3a5f, #cbd5e1, transparent);
+                }
+                .cover-ribbon-diamond {
+                    margin: 0 10px;
+                    color: #d97706;
+                    font-size: 11pt;
+                }
+                .cover-title-section {
+                    text-align: center;
+                    margin-bottom: 14px;
+                }
+                .cover-title-badge {
+                    display: inline-block;
+                    background: #f1f5f9;
+                    color: #334155;
+                    font-size: 7.8pt;
+                    font-weight: 800;
+                    letter-spacing: 1.2px;
+                    text-transform: uppercase;
+                    padding: 2.5px 10px;
+                    border-radius: 4px;
+                    border: 1px solid #cbd5e1;
+                    margin-bottom: 6px;
+                }
+                .cover-main-title {
+                    font-size: 16pt;
+                    font-weight: 800;
+                    color: #0f2942;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    line-height: 1.25;
+                    margin: 0 0 5px 0;
+                }
+                .cover-exam-badge {
+                    display: inline-block;
+                    font-size: 10.5pt;
+                    font-weight: 700;
+                    color: #1d4ed8;
+                    background: #eff6ff;
+                    border: 1.5px solid #bfdbfe;
+                    padding: 3px 14px;
+                    border-radius: 6px;
+                    margin-top: 3px;
+                }
+                .cover-subtitle-desc {
+                    font-size: 8.2pt;
+                    color: #64748b;
+                    max-width: 650px;
+                    margin: 7px auto 0 auto;
+                    line-height: 1.35;
+                }
+                .cover-kpi-grid {
+                    display: grid;
+                    grid-template-columns: repeat(4, 1fr);
+                    gap: 10px;
+                    margin: 12px 0;
+                }
+                .cover-kpi-box {
+                    background: #ffffff;
+                    border: 1.5px solid #e2e8f0;
+                    border-top: 3.5px solid #0f2942;
+                    border-radius: 6px;
+                    padding: 8px 6px;
+                    text-align: center;
+                }
+                .cover-kpi-box.kpi-blue { border-top-color: #2563eb; }
+                .cover-kpi-box.kpi-green { border-top-color: #16a34a; }
+                .cover-kpi-box.kpi-gold { border-top-color: #d97706; }
+                .cover-kpi-box.kpi-red { border-top-color: #dc2626; }
+                .cover-kpi-val {
+                    font-size: 17pt;
+                    font-weight: 800;
+                    line-height: 1.1;
+                    color: #0f2942;
+                }
+                .cover-kpi-lbl {
+                    font-size: 7.2pt;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    color: #64748b;
+                    margin-top: 3px;
+                }
+                .cover-kpi-sub {
+                    font-size: 7pt;
+                    font-weight: 600;
+                    color: #475569;
+                    margin-top: 2px;
+                }
+                .cover-meta-card {
+                    background: #f8fafc;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 6px;
+                    padding: 9px 12px;
+                    margin-top: 8px;
+                    margin-bottom: 10px;
+                }
+                .cover-meta-grid {
+                    display: grid;
+                    grid-template-columns: repeat(3, 1fr);
+                    gap: 10px;
+                    text-align: left;
+                    font-size: 7.8pt;
+                    color: #334155;
+                }
+                .cover-meta-item strong {
+                    color: #0f2942;
+                    font-size: 7.8pt;
+                    display: block;
+                    margin-bottom: 1px;
+                }
+                .cover-footer-note {
+                    text-align: center;
+                    border-top: 1px dashed #cbd5e1;
+                    padding-top: 7px;
+                    font-size: 7.2pt;
+                    color: #64748b;
+                    line-height: 1.35;
+                }
+
+                /* Index / TOC Page Styles */
+                .pdf-index-page {
+                    background: #ffffff;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    padding: 20px 20px 16px 20px;
+                    margin-bottom: 24px;
+                    box-shadow: 0 4px 15px rgba(15, 23, 42, 0.05);
+                    box-sizing: border-box;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: space-between;
+                    min-height: 255mm;
+                    page-break-after: always;
+                    break-after: page;
+                }
+                .index-page-header {
+                    border-bottom: 2px solid #0f2942;
+                    padding-bottom: 6px;
+                    margin-bottom: 10px;
+                }
+                .index-mini-inst-line {
+                    font-size: 7.8pt;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    color: #64748b;
+                    letter-spacing: 0.5px;
+                    margin-bottom: 2px;
+                }
+                .index-title-row {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-end;
+                }
+                .index-title-main {
+                    font-size: 14pt;
+                    font-weight: 800;
+                    color: #0f2942;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    margin: 0;
+                }
+                .index-title-sub {
+                    font-size: 8pt;
+                    color: #64748b;
+                    margin-top: 2px;
+                }
+                .index-badge-tag {
+                    background: #0f2942;
+                    color: #ffffff;
+                    font-size: 7.5pt;
+                    font-weight: 700;
+                    padding: 2.5px 8px;
+                    border-radius: 4px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+                .index-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-bottom: 10px;
+                    font-size: 8pt;
+                }
+                .index-table th {
+                    background: #1e3a5f !important;
+                    color: #ffffff !important;
+                    font-size: 7.2pt;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    padding: 4.5px 7px;
+                    border: 1px solid #334155 !important;
+                    text-align: left;
+                }
+                .index-table td {
+                    padding: 4px 7px;
+                    border: 1px solid #e2e8f0;
+                    vertical-align: middle;
+                    color: #1e293b;
+                    background: #ffffff;
+                }
+                .index-table tr:nth-child(even) td {
+                    background-color: #f8fafc;
+                }
+                .index-sec-num {
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                    font-weight: 800;
+                    color: #0f2942;
+                    font-size: 8pt;
+                    white-space: nowrap;
+                }
+                .index-sec-title {
+                    font-weight: 700;
+                    color: #0f2942;
+                    font-size: 8.2pt;
+                    display: block;
+                }
+                .index-sec-desc {
+                    font-size: 7.2pt;
+                    color: #64748b;
+                    line-height: 1.25;
+                    margin-top: 1px;
+                }
+                .index-tag-badge {
+                    font-size: 6.8pt;
+                    font-weight: 700;
+                    padding: 1.5px 5px;
+                    border-radius: 3px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.3px;
+                    display: inline-block;
+                    white-space: nowrap;
+                }
+                .index-link-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 3px;
+                    font-size: 7.2pt;
+                    font-weight: 700;
+                    color: #1d4ed8;
+                    background: #eff6ff;
+                    border: 1px solid #bfdbfe;
+                    border-radius: 3px;
+                    padding: 1.5px 6px;
+                    text-decoration: none;
+                    white-space: nowrap;
+                }
+                .index-link-btn:hover {
+                    background: #2563eb;
+                    color: #ffffff;
+                }
+                .index-finder-box {
+                    background: #f0fdf4;
+                    border: 1.5px solid #bbf7d0;
+                    border-left: 3.5px solid #16a34a;
+                    border-radius: 6px;
+                    padding: 8px 10px;
+                    margin-top: 2px;
+                    margin-bottom: 8px;
+                }
+                .index-finder-title {
+                    font-size: 8pt;
+                    font-weight: 800;
+                    color: #15803d;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    margin-bottom: 5px;
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
+                }
+                .index-finder-grid {
+                    display: grid;
+                    grid-template-columns: repeat(2, 1fr);
+                    gap: 5px 10px;
+                }
+                .index-finder-item {
+                    font-size: 7.5pt;
+                    color: #1e3a24;
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
+                    line-height: 1.3;
+                }
+                .index-finder-badge {
+                    font-weight: 800;
+                    font-size: 7pt;
+                    background: #dcfce7;
+                    color: #166534;
+                    border: 1px solid #86efac;
+                    padding: 1px 4px;
+                    border-radius: 3px;
+                    white-space: nowrap;
+                }
+                .index-page-footer {
+                    border-top: 1.5px solid #cbd5e1;
+                    padding-top: 5px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    font-size: 7.2pt;
+                    color: #64748b;
+                }
+
                 @media print {
-                    body { background-color: #ffffff !important; padding: 0 !important; }
-                    .report-container { box-shadow: none !important; padding: 0 !important; max-width: 100% !important; }
+                    body { background-color: #ffffff !important; padding: 0 !important; margin: 0 !important; }
+                    .report-container { box-shadow: none !important; padding: 0 !important; margin: 0 !important; max-width: 100% !important; border: none !important; border-radius: 0 !important; }
                     .no-print { display: none !important; }
-                    .report-section { page-break-inside: avoid; }
-                    tr { page-break-inside: avoid; }
+                    .report-section { page-break-inside: auto !important; break-inside: auto !important; }
+                    tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+                    .kpi-card, .kpi-grid, .fail-main-card, .report-subsection, .signoff-section { page-break-inside: avoid !important; break-inside: avoid !important; }
+                    
+                    .pdf-cover-page {
+                        page-break-after: always !important;
+                        break-after: page !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        height: 260mm !important;
+                        min-height: 260mm !important;
+                        max-height: 265mm !important;
+                        border: 2.5px solid #0f2942 !important;
+                        border-radius: 0 !important;
+                        padding: 14mm 12mm 12mm 12mm !important;
+                        margin: 0 !important;
+                        box-shadow: none !important;
+                        background: #ffffff !important;
+                    }
+                    .cover-inner-border {
+                        border: 1px solid #94a3b8 !important;
+                        border-radius: 0 !important;
+                        padding: 10mm 10mm 8mm 10mm !important;
+                        height: 100% !important;
+                        box-sizing: border-box !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        justify-content: space-between !important;
+                    }
+                    .pdf-index-page {
+                        page-break-after: always !important;
+                        break-after: page !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        height: 260mm !important;
+                        min-height: 260mm !important;
+                        max-height: 265mm !important;
+                        border: 1.5px solid #cbd5e1 !important;
+                        border-radius: 0 !important;
+                        padding: 12mm 12mm 10mm 12mm !important;
+                        margin: 0 !important;
+                        box-shadow: none !important;
+                        background: #ffffff !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        justify-content: space-between !important;
+                    }
+                    .index-link-btn {
+                        background: transparent !important;
+                        border: 1px solid #cbd5e1 !important;
+                        color: #0f2942 !important;
+                        padding: 1px 4px !important;
+                    }
+                    .index-table td, .index-table th {
+                        padding: 3.5px 5px !important;
+                    }
                 }
             </style>
         </head>
         <body>
             <!-- Interactive Top Action Toolbar (Hidden on paper) -->
-            <div class="no-print d-flex justify-content-between align-items-center mb-4 p-3 bg-white rounded-3 shadow-sm border">
+            <div class="no-print d-flex justify-content-between align-items-center mb-4 p-3 bg-white rounded-3 shadow-sm border border-slate-200">
                 <div class="d-flex align-items-center gap-2">
-                    <span class="badge bg-primary fs-7 px-3 py-2"><i class="bi bi-file-earmark-pdf-fill me-1"></i> Print / PDF Layout Ready</span>
-                    <span class="text-muted small">Optimized for standard A4 paper and clean reading</span>
+                    <span class="badge px-3 py-2 text-white" style="background-color: #1e3a5f; font-size: 11px;">
+                        <i class="bi bi-file-earmark-pdf-fill me-1"></i> A4 PDF Ready
+                    </span>
+                    <span class="text-secondary small">Includes Formal Cover Page, Navigation Index & Comprehensive Sections.</span>
                 </div>
                 <div class="d-flex gap-2">
-                    <button class="btn btn-primary btn-sm fw-bold px-4 py-2 rounded-2" onclick="window.print()">
+                    <button class="btn btn-sm px-4 fw-bold text-white shadow-sm" style="background-color: #1e3a5f;" onclick="window.print()">
                         <i class="bi bi-printer-fill me-1"></i> Print / Save as PDF
                     </button>
-                    <button class="btn btn-outline-secondary btn-sm px-3 py-2 rounded-2" onclick="window.close()">
+                    <button class="btn btn-outline-secondary btn-sm px-3" onclick="window.close()">
                         <i class="bi bi-x-lg me-1"></i> Close
                     </button>
                 </div>
             </div>
 
-                        <div class="report-container">
-                <!-- Official Institutional Header Section -->
-                <div class="institution-header text-center mb-3 pb-2 border-bottom border-2 border-dark" style="page-break-inside: avoid;">
-                    <h2 style="font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px;">
-                        ${instDetails.instituteName}
-                    </h2>
-                    <div style="font-size: 11px; color: #334155; font-weight: 600; display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap;">
-                        <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Address:</strong> ${instDetails.address}</span>
-                        <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN:</strong> <span style="font-family: monospace; font-size: 12px; font-weight: 800; background: #e2e8f0; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; color: #0f172a;">${instDetails.eiin}</span></span>
-                        <span><i class="bi bi-award-fill text-success me-1"></i><strong>Board:</strong> ${(metaInfo.board || "Board").replace(/\s*\(Fast Server\)/i, "").trim()}</span>
+            <div class="report-container">
+                <!-- ========================================== -->
+                <!-- PAGE 1: FORMAL INSTITUTIONAL COVER PAGE    -->
+                <!-- ========================================== -->
+                <div class="pdf-cover-page">
+                    <div class="cover-inner-border">
+                        <!-- Top Institutional Seal & Accreditation Banner -->
+                        <div>
+                            <div class="cover-seal-wrapper">
+                                <div class="cover-seal-icon">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                                        <path d="M12 6v6"></path>
+                                        <path d="M9 9h6"></path>
+                                    </svg>
+                                </div>
+                                <div class="cover-org-label">Education Board Result & Academic Performance Analytics</div>
+                                <div class="cover-status-badge">
+                                    <i class="bi bi-shield-check me-1"></i>Official Institutional Evaluation Dossier &bull; Session ${metaInfo.year || new Date().getFullYear()}
+                                </div>
+                            </div>
+
+                            <!-- Institution Grand Header -->
+                            <div class="cover-inst-header">
+                                <h1 class="cover-inst-name">${instDetails.instituteName || "Academic Institution"}</h1>
+                                <div class="cover-inst-meta">
+                                    <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Location:</strong> ${instDetails.address || "Bangladesh"}</span>
+                                    <span class="cover-meta-dot">&bull;</span>
+                                    <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN:</strong> <span class="cover-eiin-pill">${instDetails.eiin || "N/A"}</span></span>
+                                    <span class="cover-meta-dot">&bull;</span>
+                                    <span><i class="bi bi-award-fill text-success me-1"></i><strong>Board:</strong> ${cleanBoard}</span>
+                                </div>
+                            </div>
+
+                            <!-- Ribbon Divider -->
+                            <div class="cover-divider-ribbon">
+                                <div class="cover-ribbon-line"></div>
+                                <div class="cover-ribbon-diamond"><i class="bi bi-mortarboard-fill"></i></div>
+                                <div class="cover-ribbon-line right"></div>
+                            </div>
+
+                            <!-- Main Document Title -->
+                            <div class="cover-title-section">
+                                <div class="cover-title-badge">Comprehensive Academic Performance Report</div>
+                                <h2 class="cover-main-title">ANNUAL BOARD RESULT PERFORMANCE & DIAGNOSTIC REPORT</h2>
+                                <div class="cover-exam-badge">
+                                    <i class="bi bi-check2-circle me-1"></i>${metaInfo.exam || "Examination"} Examination &mdash; ${metaInfo.year || new Date().getFullYear()}
+                                </div>
+                                <div class="cover-subtitle-desc">
+                                    Official institutional evaluation including subject-level diagnostics, student merit positions, stream-wise comparative analyses, and failure remediation rosters.
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Middle: Executive Performance Snapshot (4 KPI Cards) -->
+                        <div>
+                            <div class="cover-kpi-grid">
+                                <div class="cover-kpi-box">
+                                    <div class="cover-kpi-val">${summary.total_students || 0}</div>
+                                    <div class="cover-kpi-lbl">Total Enrolled</div>
+                                    <div class="cover-kpi-sub text-muted">${summary.appeared || 0} Attended &bull; ${summary.absent || 0} Absent</div>
+                                </div>
+                                <div class="cover-kpi-box kpi-green">
+                                    <div class="cover-kpi-val text-success">${summary.pass_rate || 0}%</div>
+                                    <div class="cover-kpi-lbl">Overall Pass Rate</div>
+                                    <div class="cover-kpi-sub text-success">${summary.passed || 0} Passed (${summary.failed || 0} Failed)</div>
+                                </div>
+                                <div class="cover-kpi-box kpi-gold">
+                                    <div class="cover-kpi-val text-warning">${gpa5WithCount}</div>
+                                    <div class="cover-kpi-lbl">GPA 5.0 (With 4th)</div>
+                                    <div class="cover-kpi-sub text-muted">${gpa5WithoutCount} Golden A+ (Pure)</div>
+                                </div>
+                                <div class="cover-kpi-box kpi-red">
+                                    <div class="cover-kpi-val text-danger">${summary.one_subject_fail_count || 0}</div>
+                                    <div class="cover-kpi-lbl">1-Subject Fail</div>
+                                    <div class="cover-kpi-sub text-danger">Supplementary Eligible</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Bottom: Metadata, Certification & Formal Imprint -->
+                        <div>
+                            <div class="cover-meta-card">
+                                <div class="cover-meta-grid">
+                                    <div class="cover-meta-item">
+                                        <strong>DOCUMENT STATUS</strong>
+                                        <span>Official & Verified Copy</span>
+                                    </div>
+                                    <div class="cover-meta-item">
+                                        <strong>REPORT GENERATION</strong>
+                                        <span>${nowStr}</span>
+                                    </div>
+                                    <div class="cover-meta-item">
+                                        <strong>CURRICULUM STREAMS</strong>
+                                        <span>Science, Humanities, Business Studies</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="cover-footer-note">
+                                <div class="fw-semibold text-dark mb-1">
+                                    <i class="bi bi-shield-lock-fill me-1 text-primary"></i> CONFIDENTIAL INSTITUTIONAL RECORD &bull; FOR INTERNAL & ACADEMIC AUDIT USE ONLY
+                                </div>
+                                <div>Generated By iCT Center &nbsp;&bull;&nbsp; Contact: 01641711531 &nbsp;&bull;&nbsp; Page 1 (Cover Page)</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <!-- Document Header -->
-                <div class="report-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+
+                <!-- ========================================== -->
+                <!-- PAGE 2: REPORT INDEX / TABLE OF CONTENTS   -->
+                <!-- ========================================== -->
+                <div class="pdf-index-page">
+                    <div>
+                        <!-- Mini Header -->
+                        <div class="index-page-header">
+                            <div class="index-mini-inst-line">
+                                ${instDetails.instituteName || "Institution"} &bull; EIIN: ${instDetails.eiin || "N/A"} &bull; ${cleanBoard} Board &bull; ${metaInfo.exam || "Exam"} ${metaInfo.year || ""}
+                            </div>
+                            <div class="index-title-row">
+                                <div>
+                                    <h2 class="index-title-main"><i class="bi bi-list-columns-reverse me-2 text-primary"></i>REPORT INDEX & TABLE OF CONTENTS</h2>
+                                    <div class="index-title-sub">Comprehensive Section Roadmap & Specific Information Locator</div>
+                                </div>
+                                <div>
+                                    <span class="index-badge-tag"><i class="bi bi-compass me-1"></i>Page 2 Index</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TOC Table -->
+                        <table class="index-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 55px; text-align: center;">Sec #</th>
+                                    <th>Report Section Title & Analytical Scope</th>
+                                    <th style="width: 140px; text-align: center;">Category / Focus</th>
+                                    <th style="width: 80px; text-align: center;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 1</td>
+                                    <td>
+                                        <span class="index-sec-title">1. Overall Institution Performance Summary</span>
+                                        <div class="index-sec-desc">Executive summary of total enrolled, sat for exam, passed, failed, pass rate %, and GPA distribution.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-primary-subtle text-primary border border-primary-subtle index-tag-badge">Overview</span></td>
+                                    <td class="text-center"><a href="#report-sec-1" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 2</td>
+                                    <td>
+                                        <span class="index-sec-title">2. Regular vs. Irregular Candidates Breakdown</span>
+                                        <div class="index-sec-desc">Comparative analysis of fresh regular candidates vs. irregular/retake students & group matrix.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-info-subtle text-info-emphasis border border-info-subtle index-tag-badge">Comparative</span></td>
+                                    <td class="text-center"><a href="#report-sec-2" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 3</td>
+                                    <td>
+                                        <span class="index-sec-title">3. Group Performance Comparison</span>
+                                        <div class="index-sec-desc">Academic discipline breakdown across Science, Humanities, and Business Studies groups.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle index-tag-badge">Disciplines</span></td>
+                                    <td class="text-center"><a href="#report-sec-3" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 4</td>
+                                    <td>
+                                        <span class="index-sec-title">4. Subject Wise Grade Analysis (Subsections 4.1 &ndash; 4.7+)</span>
+                                        <div class="index-sec-desc">Detailed grade distribution (A+ through F), pass %, appeared, and passed counts by subject & stream.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-dark-subtle text-dark border border-dark-subtle index-tag-badge">Subject Grades</span></td>
+                                    <td class="text-center"><a href="#report-sec-4" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 5</td>
+                                    <td>
+                                        <span class="index-sec-title">5. Student Merit List (Academic Ranking)</span>
+                                        <div class="index-sec-desc">Examinees ranked in descending order of GPA (With 4th), Pure GPA (Without 4th), and grade totals.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-warning-subtle text-dark border border-warning-subtle index-tag-badge">Merit Ranking</span></td>
+                                    <td class="text-center"><a href="#report-sec-5" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 6</td>
+                                    <td>
+                                        <span class="index-sec-title">6. Fail Analysis & Diagnostic Matrix (Without 4th Subject)</span>
+                                        <div class="index-sec-desc">Official fail summary matrix and 4-column failure tables (All, Science, Humanities, Business Studies).</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-danger-subtle text-danger border border-danger-subtle index-tag-badge">Failure Matrix</span></td>
+                                    <td class="text-center"><a href="#report-sec-6" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 7</td>
+                                    <td>
+                                        <span class="index-sec-title">7. One Subject Fail - Supplementary Eligible Students</span>
+                                        <div class="index-sec-desc">Candidate roster of single-subject failures eligible for supplementary re-examination.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-warning-subtle text-danger border border-warning-subtle index-tag-badge">Supplementary</span></td>
+                                    <td class="text-center"><a href="#report-sec-7" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 8</td>
+                                    <td>
+                                        <span class="index-sec-title">8. Two Subject Fail Students Roster</span>
+                                        <div class="index-sec-desc">Students failing in exactly two subjects with specific failed subject pairs identified.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-danger-subtle text-danger border border-danger-subtle index-tag-badge">2-Sub Remedial</span></td>
+                                    <td class="text-center"><a href="#report-sec-8" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                                ${(mFail.students || []).length > 0 ? `
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 9</td>
+                                    <td>
+                                        <span class="index-sec-title">9. Multi-Subject Fail Students Roster (3+ Subjects)</span>
+                                        <div class="index-sec-desc">Examinees failing in 3 or more subjects requiring intensive academic intervention.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle index-tag-badge">Critical Intervention</span></td>
+                                    <td class="text-center"><a href="#report-sec-9" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>` : ""}
+                                <tr>
+                                    <td class="text-center index-sec-num">Sec 10</td>
+                                    <td>
+                                        <span class="index-sec-title">10. Absent Candidates Analysis & Examination Roster</span>
+                                        <div class="index-sec-desc">Complete roster of registered candidates who did not sit for the board examination.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle index-tag-badge">Absentee Audit</span></td>
+                                    <td class="text-center"><a href="#report-sec-10" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                                <tr>
+                                    <td class="text-center index-sec-num">Signoff</td>
+                                    <td>
+                                        <span class="index-sec-title">Institutional Verification & Official Signatures</span>
+                                        <div class="index-sec-desc">Authentication and signature endorsements from Tabulator, Assistant, and Principal.</div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-success-subtle text-success border border-success-subtle index-tag-badge">Certification</span></td>
+                                    <td class="text-center"><a href="#report-sec-signoff" class="index-link-btn">Jump &rarr;</a></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Quick Information Locator Box (Fast Finder for Specific Inquiries) -->
+                        <div class="index-finder-box">
+                            <div class="index-finder-title">
+                                <i class="bi bi-search me-1"></i> Quick Information Locator &bull; How to Find Specific Info
+                            </div>
+                            <div class="index-finder-grid">
+                                <div class="index-finder-item">
+                                    <span class="index-finder-badge">Supplementary List</span>
+                                    <span>Find single-subject fail students eligible for re-exam in <strong>Section 7</strong></span>
+                                </div>
+                                <div class="index-finder-item">
+                                    <span class="index-finder-badge">Merit Ranks</span>
+                                    <span>Find student academic positions, GPA 5 & rolls in <strong>Section 5</strong></span>
+                                </div>
+                                <div class="index-finder-item">
+                                    <span class="index-finder-badge">Fail Diagnostics</span>
+                                    <span>Identify high-failure subjects & groups in <strong>Section 6</strong></span>
+                                </div>
+                                <div class="index-finder-item">
+                                    <span class="index-finder-badge">Subject Grades</span>
+                                    <span>Find A+ counts & pass percentages per subject in <strong>Section 4</strong></span>
+                                </div>
+                                <div class="index-finder-item">
+                                    <span class="index-finder-badge">Stream Totals</span>
+                                    <span>Compare Science vs. Humanities vs. Biz outcomes in <strong>Section 3</strong></span>
+                                </div>
+                                <div class="index-finder-item">
+                                    <span class="index-finder-badge">Absentee Rolls</span>
+                                    <span>View roll numbers & parent names of absentees in <strong>Section 10</strong></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Index Page Footer -->
+                    <div class="index-page-footer">
+                        <div><i class="bi bi-info-circle me-1"></i>Click any section above to navigate directly on screen &bull; Save as PDF retains standard page flow</div>
+                        <div class="fw-bold">Generated by iCT Center &bull; Contact: 01641711531 &bull; Page 2</div>
+                    </div>
+                </div>
+
+                <!-- ========================================== -->
+                <!-- PAGE 3+: MASTER REPORT LAYOUT & TABLES     -->
+                <!-- ========================================== -->
+                <table class="report-master-layout">
+                    <thead class="report-master-thead">
+                        <tr>
+                            <th class="report-master-th">
+                                <!-- Heading repeated on EVERY page in print -->
+                                <div class="print-page-header">
+                                    <h2 class="header-inst-name">${instDetails.instituteName}</h2>
+                                    <div class="header-inst-meta">
+                                        <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Address:</strong> ${instDetails.address}</span>
+                                        <span class="meta-dot">&bull;</span>
+                                        <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN No:</strong> <span class="eiin-tag">${instDetails.eiin || "N/A"}</span></span>
+                                        <span class="meta-dot">&bull;</span>
+                                        <span><i class="bi bi-award-fill text-success me-1"></i><strong>Board:</strong> ${cleanBoard}</span>
+                                    </div>
+                                    <div class="header-line"></div>
+                                </div>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody class="report-master-tbody">
+                        <tr>
+                            <td class="report-master-td">
+                                <div class="report-body-content">
+                                    <!-- Document Header -->
+                                    <div class="report-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div>
                         <div class="badge-pill-custom bg-dark text-white mb-1">
                             <i class="bi bi-award-fill text-warning me-1"></i> ACADEMIC EVALUATION & RESULT REPORT
@@ -3506,7 +4959,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>
 
                 <!-- SECTION 1: OVERALL INSTITUTION SUMMARY -->
-                <div class="report-section">
+                <div class="report-section" id="report-sec-1">
                     <div class="section-title">
                         <i class="bi bi-buildings-fill text-primary"></i> 1. Overall Institution Performance Summary
                     </div>
@@ -3546,7 +4999,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>
 
                 <!-- SECTION 2: REGULAR VS IRREGULAR CANDIDATE PERFORMANCE -->
-                <div class="report-section">
+                <div class="report-section" id="report-sec-2">
                     <div class="section-title">
                         <i class="bi bi-people-fill text-primary"></i> 2. Regular vs. Irregular Candidates Breakdown
                     </div>
@@ -3645,7 +5098,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>
 
                 <!-- SECTION 3: GROUP PERFORMANCE COMPARISON -->
-                <div class="report-section">
+                <div class="report-section" id="report-sec-3">
                     <div class="section-title">
                         <i class="bi bi-grid-3x3-gap-fill text-primary"></i> 3. Group Performance Comparison
                     </div>
@@ -3689,7 +5142,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>
 
                 <!-- SECTION 4: SUBJECT WISE GRADE ANALYSIS WITH SEPARATE SECTIONS -->
-                <div class="report-section">
+                <div class="report-section" id="report-sec-4">
                     <div class="section-title">
                         <i class="bi bi-book-half text-primary"></i> 4. SUBJECT WISE GRADE ANALYSIS
                     </div>
@@ -3772,7 +5225,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>
 
                 <!-- SECTION 5: STUDENT MERIT LIST -->
-                <div class="report-section">
+                <div class="report-section" id="report-sec-5">
                     <div class="section-title">
                         <i class="bi bi-trophy-fill text-warning"></i> 5. STUDENT MERIT LIST (ACADEMIC RANKING - TOTAL PASSED: ${(meritData.students || []).length})
                     </div>
@@ -3813,11 +5266,14 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>
 
                 <!-- SECTION 6: FAIL ANALYSIS (WITHOUT 4TH SUBJECT - ALL & GROUP-WISE) -->
-                <div class="report-section" style="page-break-inside: auto; break-inside: auto;">
+                <div class="report-section" id="report-sec-6" style="page-break-inside: auto; break-inside: auto;">
                     <div class="section-title">
                         <i class="bi bi-pie-chart-fill text-danger"></i> 6. FAIL ANALYSIS (WITHOUT 4TH SUBJECT) - REGULAR & IRREGULAR BREAKDOWN
                     </div>
-                    <div class="section-desc">Official 4-column failure tables showing failed subjects with Regular, Irregular, and Total student breakdown across All Candidates and Academic Groups (strictly excluding the 4th/optional subject).</div>
+                    <div class="section-desc">Official fail summary matrix and 4-column failure tables showing failed subjects with Regular, Irregular, and Total student breakdown across All Candidates and Academic Groups (strictly excluding the 4th/optional subject).</div>
+
+                    <!-- 6.0 Fail Subject Summary Matrix (Group & Candidate Type Breakdown) -->
+                    ${buildPrintFailSummaryMatrixHtml(analysisData.fail_subject_summary_matrix || buildFailSummaryMatrix(analysisData))}
 
                     <!-- 6.1 One Subject Fail Tables -->
                     <div style="page-break-inside: avoid; break-inside: avoid; margin-bottom: 16px;">
@@ -3857,7 +5313,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>
 
                 <!-- SECTION 7: ONE SUBJECT FAIL STUDENTS -->
-                <div class="report-section">
+                <div class="report-section" id="report-sec-7">
                     <div class="section-title">
                         <i class="bi bi-exclamation-octagon-fill text-warning"></i> 7. One Subject Fail - Supplementary Eligible Students (Total: ${oneFail.total || 0})
                     </div>
@@ -3892,7 +5348,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>
 
                 <!-- SECTION 8: TWO SUBJECT FAIL STUDENTS -->
-                <div class="report-section">
+                <div class="report-section" id="report-sec-8">
                     <div class="section-title">
                         <i class="bi bi-exclamation-triangle-fill text-danger"></i> 8. Two Subject Fail Students (Total: ${twoFail.total || 0})
                     </div>
@@ -3928,7 +5384,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 <!-- SECTION 9: 3+ SUBJECT FAIL STUDENTS (IF ANY) -->
                 ${(mFail.students || []).length > 0 ? `
-                <div class="report-section">
+                <div class="report-section" id="report-sec-9">
                     <div class="section-title">
                         <i class="bi bi-x-circle-fill text-secondary"></i> 9. Multi-Subject Fail Students (3+ Subjects) - Total: ${mFail.total || 0}
                     </div>
@@ -3961,7 +5417,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>` : ""}
 
                 <!-- SECTION 10: ABSENT CANDIDATES ANALYSIS & ROSTER -->
-                <div class="report-section">
+                <div class="report-section" id="report-sec-10">
                     <div class="section-title">
                         <i class="bi bi-person-x-fill text-secondary"></i> 10. Absent Candidates Roster (Did Not Sit for Exam) - Total: ${absentData.total_absent || summary.absent || 0}
                     </div>
@@ -4012,21 +5468,46 @@ document.addEventListener("DOMContentLoaded", async () => {
                 </div>
 
                 <!-- Footer Signoff Section -->
-                <div class="row pt-4 mt-4 border-top text-center text-muted" style="font-size: 10px;">
-                    <div class="col-4">
-                        <div class="border-top border-dark mx-4 pt-1 fw-bold">Prepared by (Staff)</div>
-                    </div>
-                    <div class="col-4">
-                        <div class="border-top border-dark mx-4 pt-1 fw-bold">Checked by (Tabulator)</div>
-                    </div>
-                    <div class="col-4">
-                        <div class="border-top border-dark mx-4 pt-1 fw-bold">Principal / Head of Institution</div>
+                <div class="signoff-section" id="report-sec-signoff">
+                    <div class="row pt-4 text-center text-muted" style="font-size: 8.5pt;">
+                        <div class="col-4">
+                            <div class="sign-line">Prepared by (Staff)</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="sign-line">Checked by (Tabulator)</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="sign-line">Principal / Head of Institution</div>
+                        </div>
                     </div>
                 </div>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                    <tfoot class="report-master-tfoot">
+                        <tr>
+                            <th class="report-master-tf">
+                                <!-- Footer repeated on EVERY page in print -->
+                                <div class="print-page-footer">
+                                    <div class="footer-line"></div>
+                                    <div class="footer-row">
+                                        <div class="footer-brand">
+                                            <i class="bi bi-shield-check me-1"></i>Genrated By iCT Center &nbsp;&bull;&nbsp; Contact: 01641711531
+                                        </div>
+                                        <div class="footer-meta">
+                                            <span>Comprehensive Academic Performance Report &bull; EIIN: ${instDetails.eiin || "N/A"} &bull; A4 Document</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </th>
+                        </tr>
+                    </tfoot>
+                </table>
 
                 <!-- Bottom Print Button (Hidden on paper) -->
                 <div class="no-print text-center my-4 pt-3 border-top">
-                    <button class="btn btn-primary btn-lg px-5 shadow-sm fw-bold" onclick="window.print()">
+                    <button class="btn btn-lg px-5 shadow-sm fw-bold text-white" style="background-color: #1e3a5f;" onclick="window.print()">
                         <i class="bi bi-printer-fill me-2"></i> Print / Save as PDF
                     </button>
                     <button class="btn btn-outline-secondary btn-lg px-4 ms-2" onclick="window.close()">
@@ -4080,11 +5561,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             return;
         }
 
+        const cleanBoard = (metaInfo && metaInfo.board ? metaInfo.board : "Board").replace(/\s*\(Fast Server\)/i, "").trim();
         const examLabel = [metaInfo && metaInfo.exam ? metaInfo.exam : "Analyzed File", metaInfo && metaInfo.year ? metaInfo.year : ""].filter(Boolean).join(" ").trim();
         const cleanInstName = (instDetails.instituteName || "Institution").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
-        const eiinVal = instDetails.eiin || "EIIN";
+        const eiinPrefix = instDetails.eiin ? `${instDetails.eiin}, ` : "";
         const cleanSectionTitle = (title || "Report").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
-        const safeDocTitle = `${eiinVal}, ${cleanInstName} ${cleanSectionTitle} - ${examLabel}`;
+        const safeDocTitle = `${eiinPrefix}${cleanInstName} ${cleanSectionTitle} - ${examLabel}`;
         const nowStr = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 
         const html = `
@@ -4096,57 +5578,178 @@ document.addEventListener("DOMContentLoaded", async () => {
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
             <style>
-                @page { size: A4 portrait; margin: 10mm 8mm; }
+                @page {
+                    size: A4 portrait;
+                    margin: 10mm 9mm 12mm 9mm;
+                }
+                * {
+                    box-sizing: border-box;
+                }
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                    font-size: 10px;
+                    font-size: 9pt;
+                    line-height: 1.35;
                     color: #1e293b;
-                    background-color: #f8fafc;
-                    padding: 15px;
+                    background-color: #f1f5f9;
+                    padding: 18px 14px;
+                    margin: 0;
                     -webkit-print-color-adjust: exact !important;
                     print-color-adjust: exact !important;
                 }
                 .report-container {
-                    max-width: 1050px;
+                    max-width: 1080px;
                     margin: 0 auto;
                     background: #ffffff;
-                    padding: 20px 24px;
-                    border-radius: 10px;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+                    padding: 22px 26px;
+                    border-radius: 12px;
+                    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);
+                    border: 1px solid #e2e8f0;
+                }
+                table.report-master-layout {
+                    width: 100% !important;
+                    border-collapse: collapse !important;
+                    border: none !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    background: transparent !important;
+                }
+                table.report-master-layout > thead {
+                    display: table-header-group !important;
+                }
+                table.report-master-layout > tfoot {
+                    display: table-footer-group !important;
+                }
+                table.report-master-layout > thead > tr > th,
+                table.report-master-layout > thead > tr > td,
+                table.report-master-layout > tbody > tr > td,
+                table.report-master-layout > tfoot > tr > th,
+                table.report-master-layout > tfoot > tr > td {
+                    border: none !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                    background: transparent !important;
+                    font-weight: normal;
+                    text-align: left;
+                }
+                .print-page-header {
+                    width: 100%;
+                    padding-bottom: 7px;
+                    margin-bottom: 11px;
+                    text-align: center;
+                }
+                .header-inst-name {
+                    font-size: 16.5pt;
+                    font-weight: 800;
+                    color: #0f2942;
+                    margin: 0 0 3px 0;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    line-height: 1.2;
+                }
+                .header-inst-meta {
+                    font-size: 8.5pt;
+                    color: #334155;
+                    font-weight: 600;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    gap: 12px;
+                    flex-wrap: wrap;
+                    margin-top: 3px;
+                }
+                .meta-dot {
+                    color: #94a3b8;
+                    font-weight: bold;
+                }
+                .eiin-tag {
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                    font-size: 9pt;
+                    font-weight: 800;
+                    background: #e2e8f0;
+                    color: #0f2942;
+                    padding: 1px 7px;
+                    border-radius: 4px;
+                    letter-spacing: 0.5px;
+                    border: 1px solid #cbd5e1;
+                    display: inline-block;
+                }
+                .header-line {
+                    height: 2.5px;
+                    background: linear-gradient(90deg, #0f2942 0%, #1e3a5f 60%, #3b82f6 100%);
+                    margin-top: 8px;
+                    border-radius: 2px;
+                }
+                .print-page-footer {
+                    width: 100%;
+                    padding-top: 6px;
+                    margin-top: 10px;
+                }
+                .footer-line {
+                    height: 1.5px;
+                    background: #cbd5e1;
+                    margin-bottom: 5px;
+                }
+                .footer-row {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    font-size: 8.2pt;
+                    color: #475569;
+                }
+                .footer-brand {
+                    font-weight: 700;
+                    color: #0f2942;
+                    letter-spacing: 0.2px;
+                }
+                .footer-meta {
+                    color: #64748b;
+                    font-size: 8pt;
                 }
                 .report-header {
-                    border-bottom: 2px solid #0f172a;
-                    padding-bottom: 12px;
-                    margin-bottom: 15px;
+                    border-bottom: 1.5px solid #cbd5e1;
+                    padding-bottom: 10px;
+                    margin-bottom: 14px;
+                }
+                .report-note-box {
+                    background-color: #f8fafc;
+                    border: 1px solid #e2e8f0;
+                    border-left: 3.5px solid #3b82f6;
+                    border-radius: 6px;
+                    padding: 8px 12px;
+                    font-size: 8.5pt;
+                    color: #475569;
+                    margin-bottom: 14px;
                 }
                 .kpi-grid {
                     display: flex;
                     gap: 10px;
-                    margin-bottom: 15px;
+                    margin-bottom: 14px;
                     flex-wrap: wrap;
                 }
                 .kpi-card {
-                    flex: 1 1 140px;
+                    flex: 1 1 130px;
                     background: #ffffff;
-                    border: 1px solid #cbd5e1;
+                    border: 1px solid #e2e8f0;
                     border-top: 3px solid #2563eb;
-                    border-radius: 6px;
+                    border-radius: 8px;
                     padding: 8px 10px;
                     text-align: center;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
                 }
                 .kpi-card.kpi-success { border-top-color: #16a34a; }
                 .kpi-card.kpi-danger { border-top-color: #dc2626; }
                 .kpi-card.kpi-warning { border-top-color: #d97706; }
-                .kpi-card.kpi-dark { border-top-color: #0f172a; }
+                .kpi-card.kpi-dark { border-top-color: #0f2942; }
                 .kpi-card .kpi-num {
-                    font-size: 18px;
+                    font-size: 16pt;
                     font-weight: 800;
                     line-height: 1.2;
                     margin-top: 2px;
                     margin-bottom: 1px;
+                    color: #0f2942;
                 }
                 .kpi-card .kpi-label {
-                    font-size: 9px;
+                    font-size: 7.5pt;
                     font-weight: 700;
                     text-transform: uppercase;
                     letter-spacing: 0.5px;
@@ -4154,16 +5757,16 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
                 table {
                     width: 100%;
-                    margin-bottom: 15px;
-                    font-size: 9.5px;
+                    margin-bottom: 14px;
+                    font-size: 8.5pt;
                     border-collapse: collapse;
                 }
                 th {
-                    background-color: #0f172a !important;
+                    background-color: #1e3a5f !important;
                     color: #ffffff !important;
                     font-weight: 600;
                     text-transform: uppercase;
-                    font-size: 8.5px;
+                    font-size: 7.8pt;
                     letter-spacing: 0.3px;
                     padding: 5px 6px;
                     border: 1px solid #334155 !important;
@@ -4171,48 +5774,55 @@ document.addEventListener("DOMContentLoaded", async () => {
                     vertical-align: middle;
                 }
                 td {
-                    padding: 4px 6px;
+                    padding: 4.5px 6px;
                     border: 1px solid #cbd5e1;
                     text-align: center;
                     vertical-align: middle;
+                    color: #1e293b;
                 }
                 tbody tr:nth-child(even) { background-color: #f8fafc; }
-                .badge-gpa-gold { background-color: #fef3c7 !important; color: #92400e !important; font-weight: 700; }
-                .badge-gpa-green { background-color: #dcfce7 !important; color: #15803d !important; font-weight: 700; }
-                .badge-gpa-blue { background-color: #e0f2fe !important; color: #0369a1 !important; font-weight: 600; }
-                .badge-gpa-red { background-color: #fee2e2 !important; color: #b91c1c !important; font-weight: 700; }
+                tbody tr:hover { background-color: #f1f5f9; }
+                .badge-gpa-gold { background-color: #fef3c7 !important; color: #92400e !important; font-weight: 700; border: 1px solid #fde68a !important; border-radius: 3px; padding: 1px 4px; }
+                .badge-gpa-green { background-color: #dcfce7 !important; color: #166534 !important; font-weight: 700; border: 1px solid #bbf7d0 !important; border-radius: 3px; padding: 1px 4px; }
+                .badge-gpa-blue { background-color: #e0f2fe !important; color: #0369a1 !important; font-weight: 600; border: 1px solid #bae6fd !important; border-radius: 3px; padding: 1px 4px; }
+                .badge-gpa-red { background-color: #fee2e2 !important; color: #b91c1c !important; font-weight: 700; border: 1px solid #fecaca !important; border-radius: 3px; padding: 1px 4px; }
                 .signoff-section {
-                    margin-top: 35px;
+                    margin-top: 30px;
                     padding-top: 15px;
                     border-top: 1px dashed #cbd5e1;
-                    font-size: 10px;
+                    font-size: 8.5pt;
                     color: #475569;
+                    page-break-inside: avoid;
+                    break-inside: avoid;
                 }
                 .sign-line {
-                    border-top: 1.5px solid #0f172a;
-                    margin: 0 20px;
+                    border-top: 1.5px solid #0f2942;
+                    margin: 0 15px;
                     padding-top: 4px;
-                    font-weight: bold;
+                    font-weight: 700;
+                    color: #0f2942;
                 }
                 @media print {
                     .no-print { display: none !important; }
-                    body { padding: 0 !important; background: #ffffff !important; }
-                    .report-container { max-width: 100% !important; padding: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
-                    tr { page-break-inside: avoid; }
-                    thead { display: table-header-group; }
+                    body { padding: 0 !important; margin: 0 !important; background: #ffffff !important; }
+                    .report-container { max-width: 100% !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; border: none !important; border-radius: 0 !important; }
+                    tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+                    .kpi-card, .kpi-grid, .fail-main-card, .report-subsection, .signoff-section { page-break-inside: avoid !important; break-inside: avoid !important; }
                 }
             </style>
         </head>
         <body>
             <div class="report-container">
                 <!-- Action Toolbar (Hidden in print) -->
-                <div class="no-print d-flex justify-content-between align-items-center p-3 mb-3 bg-light border rounded-3 shadow-sm">
+                <div class="no-print d-flex justify-content-between align-items-center p-3 mb-3 bg-white border border-slate-200 rounded-3 shadow-sm">
                     <div class="d-flex align-items-center gap-2">
-                        <span class="badge bg-danger fs-6 px-3 py-2"><i class="bi bi-file-earmark-pdf-fill me-1"></i> PDF Ready</span>
+                        <span class="badge px-3 py-2 text-white" style="background-color: #1e3a5f; font-size: 11px;">
+                            <i class="bi bi-file-earmark-pdf-fill me-1"></i> A4 PDF Ready
+                        </span>
                         <span class="text-secondary small">Click <strong>Print / Save as PDF</strong> below to download or print this document on A4.</span>
                     </div>
                     <div class="d-flex gap-2">
-                        <button class="btn btn-danger btn-sm px-4 fw-bold shadow-sm" onclick="window.print()">
+                        <button class="btn btn-sm px-4 fw-bold text-white shadow-sm" style="background-color: #1e3a5f;" onclick="window.print()">
                             <i class="bi bi-printer-fill me-1"></i> Print / Save as PDF
                         </button>
                         <button class="btn btn-outline-secondary btn-sm px-3" onclick="window.close()">
@@ -4221,66 +5831,100 @@ document.addEventListener("DOMContentLoaded", async () => {
                     </div>
                 </div>
 
-                <!-- Official Institutional Header Section -->
-                <div class="institution-header text-center mb-3 pb-2 border-bottom border-2 border-dark" style="page-break-inside: avoid;">
-                    <h2 style="font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px;">
-                        ${instDetails.instituteName}
-                    </h2>
-                    <div style="font-size: 11px; color: #334155; font-weight: 600; display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap;">
-                        <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Address:</strong> ${instDetails.address}</span>
-                        <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN:</strong> <span style="font-family: monospace; font-size: 12px; font-weight: 800; background: #e2e8f0; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; color: #0f172a;">${instDetails.eiin}</span></span>
-                        <span><i class="bi bi-award-fill text-success me-1"></i><strong>Board:</strong> ${(metaInfo.board || "Board").replace(/\s*\(Fast Server\)/i, "").trim()}</span>
-                    </div>
-                </div>
+                <table class="report-master-layout">
+                    <thead class="report-master-thead">
+                        <tr>
+                            <th class="report-master-th">
+                                <!-- Heading repeated on EVERY page in print -->
+                                <div class="print-page-header">
+                                    <h2 class="header-inst-name">${instDetails.instituteName}</h2>
+                                    <div class="header-inst-meta">
+                                        <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Address:</strong> ${instDetails.address}</span>
+                                        <span class="meta-dot">&bull;</span>
+                                        <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN No:</strong> <span class="eiin-tag">${instDetails.eiin || "N/A"}</span></span>
+                                        <span class="meta-dot">&bull;</span>
+                                        <span><i class="bi bi-award-fill text-success me-1"></i><strong>Board:</strong> ${cleanBoard}</span>
+                                    </div>
+                                    <div class="header-line"></div>
+                                </div>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody class="report-master-tbody">
+                        <tr>
+                            <td class="report-master-td">
+                                <div class="report-body-content">
+                                    <!-- Header -->
+                                    <div class="report-header">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <h4 class="fw-bold mb-0 text-dark" style="letter-spacing: -0.3px;">${title}</h4>
+                                                <div class="text-primary fw-semibold mt-1" style="font-size: 11px;">
+                                                    ${metaInfo.exam || "Examination"} ${metaInfo.year || ""} &bull; ${cleanBoard}
+                                                </div>
+                                                ${subtitle ? `<div class="text-muted small mt-0.5">${subtitle}</div>` : ""}
+                                            </div>
+                                            <div class="text-end text-secondary small" style="font-size: 8.5pt; line-height: 1.45;">
+                                                <div><strong>Report Date:</strong> ${nowStr}</div>
+                                                <div><strong>Academic Session:</strong> ${metaInfo.year || new Date().getFullYear()}</div>
+                                                <div class="text-dark fw-bold mt-0.5">Academic Performance Record</div>
+                                            </div>
+                                        </div>
+                                    </div>
 
-                <!-- Header -->
-                <div class="report-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div>
-                            <h4 class="fw-bold mb-0 text-dark" style="letter-spacing: -0.5px;">${title}</h4>
-                            <div class="text-primary fw-semibold mt-1" style="font-size: 11.5px;">
-                                ${metaInfo.exam || "HSC"} Examination ${metaInfo.year || ""} &bull; ${metaInfo.board || "Board"}
-                            </div>
-                            ${subtitle ? `<div class="text-muted small mt-0.5">${subtitle}</div>` : ""}
-                        </div>
-                        <div class="text-end text-secondary small" style="font-size: 9pt; line-height: 1.45;">
-                            <div><strong>Report Date:</strong> ${nowStr}</div>
-                            <div><strong>Academic Session:</strong> ${metaInfo.year || new Date().getFullYear()}</div>
-                            <div class="text-dark fw-bold mt-0.5">Academic Performance Record</div>
-                        </div>
-                    </div>
-                </div>
+                                    ${kpiCards ? `<div class="kpi-grid">${kpiCards}</div>` : ""}
 
-                ${kpiCards ? `<div class="kpi-grid">${kpiCards}</div>` : ""}
+                                    ${noteText ? `<div class="report-note-box">${noteText}</div>` : ""}
 
-                ${noteText ? `<div class="p-2 mb-3 bg-light border rounded small text-secondary">${noteText}</div>` : ""}
+                                    <!-- Content Data Table -->
+                                    <div class="table-responsive">
+                                        ${contentHtml}
+                                    </div>
 
-                <!-- Content Data Table -->
-                <div class="table-responsive">
-                    ${contentHtml}
-                </div>
-
-                <!-- Institutional Signoff -->
-                <div class="signoff-section">
-                    <div class="row text-center pt-4">
-                        <div class="col-4">
-                            <div class="sign-line">Prepared by (Assistant)</div>
-                        </div>
-                        <div class="col-4">
-                            <div class="sign-line">Checked by (Tabulator)</div>
-                        </div>
-                        <div class="col-4">
-                            <div class="sign-line">Head of Institution / Principal</div>
-                        </div>
-                    </div>
-                </div>
+                                    <!-- Institutional Signoff -->
+                                    <div class="signoff-section">
+                                        <div class="row text-center pt-3">
+                                            <div class="col-4">
+                                                <div class="sign-line">Prepared by (Assistant)</div>
+                                            </div>
+                                            <div class="col-4">
+                                                <div class="sign-line">Checked by (Tabulator)</div>
+                                            </div>
+                                            <div class="col-4">
+                                                <div class="sign-line">Head of Institution / Principal</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                    <tfoot class="report-master-tfoot">
+                        <tr>
+                            <th class="report-master-tf">
+                                <!-- Footer repeated on EVERY page in print -->
+                                <div class="print-page-footer">
+                                    <div class="footer-line"></div>
+                                    <div class="footer-row">
+                                        <div class="footer-brand">
+                                            <i class="bi bi-shield-check me-1"></i>Genrated By iCT Center &nbsp;&bull;&nbsp; Contact: 01641711531
+                                        </div>
+                                        <div class="footer-meta">
+                                            <span>${cleanSectionTitle} &bull; EIIN: ${instDetails.eiin || "N/A"} &bull; Page Print Copy</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </th>
+                        </tr>
+                    </tfoot>
+                </table>
 
                 <!-- Bottom Print Button (Hidden on paper) -->
                 <div class="no-print text-center my-4 pt-3 border-top">
-                    <button class="btn btn-danger px-5 shadow-sm fw-bold" onclick="window.print()">
+                    <button class="btn btn-lg px-5 shadow-sm fw-bold text-white" style="background-color: #1e3a5f;" onclick="window.print()">
                         <i class="bi bi-printer-fill me-1"></i> Print / Save as PDF
                     </button>
-                    <button class="btn btn-outline-secondary px-4 ms-2" onclick="window.close()">
+                    <button class="btn btn-outline-secondary btn-lg px-4 ms-2" onclick="window.close()">
                         Close Window
                     </button>
                 </div>
@@ -5110,10 +6754,16 @@ document.addEventListener("DOMContentLoaded", async () => {
                 `;
             });
 
+            const showMatrixInPdf = (selectedCategory === "ALL" || selectedCategory === "summary_matrix");
+            const matrixPrintHtml = showMatrixInPdf
+                ? buildPrintFailSummaryMatrixHtml(data.fail_subject_summary_matrix || buildFailSummaryMatrix(data))
+                : "";
+
             const tablesHtml = `
                 <div class="fail-print-wrapper">
                     ${printStyles}
-                    ${blocksHtml}
+                    ${matrixPrintHtml}
+                    ${(selectedCategory !== "summary_matrix") ? blocksHtml : ""}
                 </div>
             `;
 

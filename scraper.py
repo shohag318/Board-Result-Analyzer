@@ -18,6 +18,8 @@ import urllib3
 from bs4 import BeautifulSoup
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
+from eiin_lookup import resolve_institution_details
+
 try:
     import ddddocr
     _OCR = ddddocr.DdddOcr(show_ad=False)
@@ -465,7 +467,34 @@ class ResultScraper:
             type_candidate = "IMPROVEMENT"
         elif "PRIV" in type_candidate:
             type_candidate = "PRIVATE"
-        institute = student_info.get("institute") or student_info.get("institution") or ""
+        institute = (
+            student_info.get("institute")
+            or student_info.get("institution")
+            or student_info.get("college")
+            or student_info.get("school")
+            or student_info.get("school/college")
+            or student_info.get("school / college")
+            or student_info.get("centre")
+            or student_info.get("center")
+            or ""
+        )
+        raw_eiin = str(
+            student_info.get("eiin")
+            or student_info.get("eiin no")
+            or student_info.get("eiin number")
+            or student_info.get("institute code")
+            or student_info.get("inst code")
+            or student_info.get("college code")
+            or student_info.get("school code")
+            or ""
+        ).strip()
+        inst_resolved = resolve_institution_details(
+            raw_eiin=raw_eiin,
+            institute=institute,
+            board=board_val,
+        )
+        eiin = inst_resolved.get("eiin", "")
+        inst_address = inst_resolved.get("address", "")
 
         # Subject Grades summary string: "Bangla: A+, English: A, Mathematics: A+"
         grades_summary = ", ".join([f"{k}: {v}" for k, v in subject_grades.items()]) if subject_grades else "N/A"
@@ -480,6 +509,8 @@ class ResultScraper:
             "Father Name": father_name,
             "Mother Name": mother_name,
             "Institute": institute,
+            "EIIN": eiin,
+            "Institution_Address": inst_address,
             "Group": group,
             "Type": type_candidate,
             "Result": result_status,
@@ -604,6 +635,41 @@ async def generate_simulated_result(
 
     candidate_type = "REGULAR" if random.random() < 0.75 else "IRREGULAR"
 
+    b_low = str(board).lower()
+    if "cumilla" in b_low or "comilla" in b_low:
+        sim_inst = "CUMILLA SHIKKHA BOARD GOVT. MODEL COLLEGE"
+        sim_eiin = "132092"
+    elif "rajshahi" in b_low:
+        sim_inst = "RAJSHAHI COLLEGE"
+        sim_eiin = "126490"
+    elif "chittagong" in b_low or "chattogram" in b_low:
+        sim_inst = "CHITTAGONG COLLEGE"
+        sim_eiin = "133008"
+    elif "barisal" in b_low or "barishal" in b_low:
+        sim_inst = "GOVT. BRAJOMOHUN (BM) COLLEGE"
+        sim_eiin = "100742"
+    elif "sylhet" in b_low:
+        sim_inst = "MURARI CHAND (MC) COLLEGE"
+        sim_eiin = "130456"
+    elif "dinajpur" in b_low:
+        sim_inst = "DINAJPUR GOVT. COLLEGE"
+        sim_eiin = "120583"
+    elif "jessore" in b_low or "jashore" in b_low:
+        sim_inst = "GOVT. M. M. COLLEGE, JASHORE"
+        sim_eiin = "115957"
+    elif "mymensingh" in b_low:
+        sim_inst = "GOVT. ANANDA MOHAN COLLEGE"
+        sim_eiin = "111831"
+    elif "madrasah" in b_low:
+        sim_inst = "GOVT. MADRASA-E-ALIA DHAKA"
+        sim_eiin = "108156"
+    elif "technical" in b_low:
+        sim_inst = "DHAKA POLYTECHNIC INSTITUTE"
+        sim_eiin = "108036"
+    else:
+        sim_inst = "DHAKA COLLEGE"
+        sim_eiin = "107977"
+
     return {
         "Roll": roll,
         "Registration": reg,
@@ -613,6 +679,9 @@ async def generate_simulated_result(
         "Name": random.choice(sample_names),
         "Father Name": "MD. ABDUR RAHIM",
         "Mother Name": "MRS. ROKEYA BEGUM",
+        "Institute": sim_inst,
+        "EIIN": sim_eiin,
+        "Institution_Address": resolve_institution_details(raw_eiin=sim_eiin, institute=sim_inst, board=board).get("address", ""),
         "Group": group,
         "Type": candidate_type,
         "Result": result_status,
@@ -869,6 +938,186 @@ async def fetch_cumilla_result(
     return await fetch_cumilla_hsc_result(roll=roll, year=year, reg=reg)
 
 
+CHATTOGRAM_HSC_PORTAL_URL = "https://hscresult.bise-ctg.gov.bd/h22_31_x1_26/individual/result_mark_details.php"
+CHATTOGRAM_HSC_BASE_URL = "https://hscresult.bise-ctg.gov.bd/h22_31_x1_26/individual/"
+
+
+def fetch_chattogram_hsc_result_sync(
+    roll: str,
+    year: str = "",
+    reg: str = ""
+) -> Dict[str, Any]:
+    """
+    Directly fetches HSC result from the dedicated BISE Chattogram server:
+    https://hscresult.bise-ctg.gov.bd/h22_31_x1_26/individual/result_mark_details.php
+    Requires ONLY Roll number (Registration and Captcha are not needed).
+    """
+    clean_roll = str(roll).strip()
+    clean_reg = str(reg).strip() if reg else ""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/123.0.0.0 Safari/537.36"
+        ),
+        "Referer": CHATTOGRAM_HSC_BASE_URL,
+        "Origin": "https://hscresult.bise-ctg.gov.bd"
+    }
+
+    try:
+        resp = requests.post(
+            CHATTOGRAM_HSC_PORTAL_URL,
+            data={"roll": clean_roll, "button2": "Search"},
+            headers=headers,
+            verify=False,
+            timeout=12
+        )
+
+        if resp.status_code == 200:
+            html_text = resp.text
+            if "sorry! no result found" in html_text.lower() or "no result found" in html_text.lower():
+                return {
+                    "Roll": clean_roll,
+                    "Registration": clean_reg,
+                    "Exam": "HSC",
+                    "Year": str(year) if year else "2026",
+                    "Board": "Chattogram",
+                    "Name": "N/A",
+                    "Father Name": "N/A",
+                    "Mother Name": "N/A",
+                    "Institute": "N/A",
+                    "EIIN": "",
+                    "Institution_Address": "",
+                    "Group": "N/A",
+                    "Type": "N/A",
+                    "Result": "Result Not Found",
+                    "GPA": "0.00",
+                    "Status": "Sorry! No Result Found on Chattogram Board Server.",
+                    "Subject_Grades": {},
+                    "Subject_Grades_Summary": "Result Not Found"
+                }
+
+            soup = BeautifulSoup(html_text, "html.parser")
+            info_div = soup.find("div", class_="info")
+            fields: Dict[str, str] = {}
+            if info_div:
+                divs = [d.get_text(strip=True) for d in info_div.find_all("div", recursive=False)]
+                for i in range(0, len(divs) - 1, 2):
+                    k = divs[i].rstrip(":").lower().strip()
+                    v = divs[i + 1].strip()
+                    fields[k] = v
+
+            # Subject grades table
+            subject_grades: Dict[str, str] = {}
+            marks_table = soup.find("table", class_="marks")
+            if marks_table:
+                for tr in marks_table.find_all("tr"):
+                    tds = tr.find_all("td")
+                    if len(tds) >= 2:
+                        subj = tds[0].get_text(" ", strip=True)
+                        subj = re.sub(r"\s+", " ", subj).strip()
+                        grade_raw = tds[1].get_text(strip=True)
+                        subject_grades[subj] = grade_raw
+
+            name = fields.get("name", "N/A").upper()
+            gpa = fields.get("gpa", "0.00")
+            res_status = fields.get("result", "PASS" if gpa != "0.00" else "FAIL").upper()
+            institute = fields.get("institute", "").upper()
+            detected_reg = fields.get("reg. no", fields.get("reg. no.", fields.get("registration", clean_reg)))
+            group = fields.get("group", "").upper()
+            cand_type = fields.get("type", "REGULAR").upper()
+            father = fields.get("father's name", fields.get("father name", "")).upper()
+            mother = fields.get("mother's name", fields.get("mother name", "")).upper()
+
+            # Dynamic EIIN and address resolution
+            inst_resolved = resolve_institution_details(raw_eiin="", institute=institute, board="Chattogram")
+            eiin = inst_resolved.get("eiin", "")
+            addr = inst_resolved.get("address", "")
+
+            summary = ", ".join([f"{k}: {v}" for k, v in subject_grades.items()]) if subject_grades else "N/A"
+
+            # Detect year if present
+            m_year = re.search(r'HSC Result\s*(\d{4})', html_text, re.IGNORECASE)
+            detected_year = m_year.group(1) if m_year else (str(year) if year else "2026")
+
+            return {
+                "Roll": fields.get("roll no", clean_roll),
+                "Registration": detected_reg,
+                "Exam": "HSC",
+                "Year": detected_year,
+                "Board": "Chattogram",
+                "Name": name,
+                "Father Name": father,
+                "Mother Name": mother,
+                "Institute": institute,
+                "EIIN": eiin,
+                "Institution_Address": addr,
+                "Group": group,
+                "Type": cand_type,
+                "Result": res_status,
+                "GPA": gpa,
+                "Status": "Success",
+                "Subject_Grades": subject_grades,
+                "Subject_Grades_Summary": summary
+            }
+        else:
+            return {
+                "Roll": clean_roll,
+                "Registration": clean_reg,
+                "Exam": "HSC",
+                "Year": str(year) if year else "2026",
+                "Board": "Chattogram",
+                "Name": "N/A",
+                "Father Name": "N/A",
+                "Mother Name": "N/A",
+                "Institute": "N/A",
+                "EIIN": "",
+                "Institution_Address": "",
+                "Group": "N/A",
+                "Type": "N/A",
+                "Result": f"Server Error ({resp.status_code})",
+                "GPA": "0.00",
+                "Status": f"Chattogram Board server returned HTTP {resp.status_code}",
+                "Subject_Grades": {},
+                "Subject_Grades_Summary": f"Server responded with error status {resp.status_code}"
+            }
+    except Exception as e:
+        logger.error(f"Error fetching Chattogram HSC result for roll {clean_roll}: {e}")
+        return {
+            "Roll": clean_roll,
+            "Registration": clean_reg,
+            "Exam": "HSC",
+            "Year": str(year) if year else "2026",
+            "Board": "Chattogram",
+            "Name": "N/A",
+            "Father Name": "N/A",
+            "Mother Name": "N/A",
+            "Institute": "N/A",
+            "EIIN": "",
+            "Institution_Address": "",
+            "Group": "N/A",
+            "Type": "N/A",
+            "Result": "Network Error",
+            "GPA": "0.00",
+            "Status": f"Failed to connect to {CHATTOGRAM_HSC_PORTAL_URL}: {str(e)}",
+            "Subject_Grades": {},
+            "Subject_Grades_Summary": "Failed to connect to Chattogram board server"
+        }
+
+
+async def fetch_chattogram_result(
+    roll: str,
+    exam: str = "hsc",
+    year: str = "",
+    reg: str = ""
+) -> Dict[str, Any]:
+    """
+    Directly routes Chattogram result requests to dedicated HSC portal:
+    https://hscresult.bise-ctg.gov.bd/h22_31_x1_26/individual/
+    """
+    return await asyncio.to_thread(fetch_chattogram_hsc_result_sync, roll, year, reg)
+
+
 class V2ResultService:
     """
     Manages direct high-speed session to the National Education Board V2 Result System
@@ -1054,6 +1303,21 @@ class V2ResultService:
         group = res.get("stud_group") or ""
         stud_type = (res.get("stud_type") or "REGULAR").upper()
         inst_name = res.get("inst_name") or ""
+        raw_eiin = str(
+            res.get("eiin")
+            or res.get("inst_eiin")
+            or res.get("eiin_no")
+            or res.get("c_code")
+            or res.get("inst_code")
+            or ""
+        ).strip()
+        inst_resolved = resolve_institution_details(
+            raw_eiin=raw_eiin,
+            institute=inst_name,
+            board=board_name,
+        )
+        eiin = inst_resolved.get("eiin", "")
+        inst_address = inst_resolved.get("address", "")
 
         res_detail = str(res.get("res_detail") or "")
         gpa = str(res.get("gpa") or "0.00")
@@ -1093,6 +1357,8 @@ class V2ResultService:
             "Father Name": fname,
             "Mother Name": mname,
             "Institute": inst_name,
+            "EIIN": eiin,
+            "Institution_Address": inst_address,
             "Group": group,
             "Type": stud_type,
             "Result": result_status,
@@ -1158,7 +1424,15 @@ async def scrape_single_student(
         if is_ssc or "hsc" in exam.lower():
             return cumilla_res
 
-    # 2. National V2 Board Result System (Dhaka, Rajshahi, Chittagong, Barisal, Dinajpur, Jessore, Sylhet, Mymensingh, Madrasah, Technical, DIBS)
+    # 2. Special Fast Dedicated Server for Chattogram Board Results (Only Roll required)
+    if board.lower() in ["chattogram", "chittagong", "ctg"]:
+        logger.info(f"Checking Chattogram dedicated portal for Roll: {roll} (HSC)...")
+        ctg_res = await fetch_chattogram_result(roll=roll, exam=exam, year=year, reg=reg)
+        if ctg_res and ctg_res.get("Name") not in ["N/A", ""] and ctg_res.get("Result") not in ["Result Not Found", "Network Error"]:
+            return ctg_res
+        return ctg_res
+
+    # 3. National V2 Board Result System (Dhaka, Rajshahi, Barisal, Dinajpur, Jessore, Sylhet, Mymensingh, Madrasah, Technical, DIBS)
     global _V2_SERVICE
     if _V2_SERVICE is None:
         _V2_SERVICE = V2ResultService()
@@ -1261,7 +1535,51 @@ async def scrape_student_batch(
 
         return results
 
-    # 2. National V2 Board Extraction (Dhaka, Rajshahi, Chittagong, Barisal, Dinajpur, etc.)
+    # 2. Special Fast Dedicated Server for Chattogram Board (Only Roll required)
+    if board.lower() in ["chattogram", "chittagong", "ctg"]:
+        portal_name = CHATTOGRAM_HSC_BASE_URL
+        logger.info(f"Running fast batch extraction for {total} Chattogram students via {portal_name}")
+        for idx, item in enumerate(student_records, start=1):
+            roll = str(item.get("Roll", "")).strip()
+            reg = str(item.get("Registration", "")).strip()
+            logger.info(f"[{idx}/{total}] Fetching Chattogram Roll: {roll}")
+
+            try:
+                res = await fetch_chattogram_result(roll=roll, exam=exam, year=year, reg=reg)
+            except Exception as e_ind:
+                logger.warning(f"Error fetching Chattogram roll {roll}: {e_ind}")
+                res = {
+                    "Roll": roll,
+                    "Registration": reg,
+                    "Exam": exam.upper(),
+                    "Year": year,
+                    "Board": "Chattogram",
+                    "Name": "N/A",
+                    "Father Name": "N/A",
+                    "Mother Name": "N/A",
+                    "Institute": "N/A",
+                    "EIIN": "",
+                    "Institution_Address": "",
+                    "Group": "N/A",
+                    "Type": "N/A",
+                    "Result": "Error",
+                    "GPA": "0.00",
+                    "Status": str(e_ind),
+                    "Subject_Grades": {},
+                    "Subject_Grades_Summary": "Error fetching record from Chattogram server."
+                }
+
+            results.append(res)
+            if on_progress:
+                await on_progress(idx, total, res)
+
+            # Modest delay between server requests (150ms) to ensure stability
+            if idx < total:
+                await asyncio.sleep(0.15)
+
+        return results
+
+    # 3. National V2 Board Extraction (Dhaka, Rajshahi, Barisal, Dinajpur, etc.)
     global _V2_SERVICE
     if _V2_SERVICE is None:
         _V2_SERVICE = V2ResultService()

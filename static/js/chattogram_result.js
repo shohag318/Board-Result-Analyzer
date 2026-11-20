@@ -1,0 +1,670 @@
+/**
+ * chattogram_result.js - Dedicated Script for BISE Chattogram Education Board Results
+ * Direct portal: Roll Number ONLY (No Registration and No Captcha required).
+ * Gateway: https://hscresult.bise-ctg.gov.bd/h22_31_x1_26/individual/
+ */
+
+document.addEventListener("DOMContentLoaded", () => {
+    // Exam and Year inputs
+    const examSelect = document.getElementById("exam");
+    const yearSelect = document.getElementById("year");
+    const board = "chattogram";
+
+    // Single student check elements
+    const ctgSingleForm = document.getElementById("ctgSingleForm");
+    const indRollInput = document.getElementById("indRoll");
+    const submitIndBtn = document.getElementById("submitIndBtn");
+
+    // Marksheet elements
+    const individualResultCard = document.getElementById("individualResultCard");
+    const marksheetName = document.getElementById("marksheetName");
+    const marksheetExam = document.getElementById("marksheetExam");
+    const marksheetYear = document.getElementById("marksheetYear");
+    const marksheetBoard = document.getElementById("marksheetBoard");
+    const marksheetGpa = document.getElementById("marksheetGpa");
+    const marksheetResultBadge = document.getElementById("marksheetResultBadge");
+    const marksheetRoll = document.getElementById("marksheetRoll");
+    const marksheetReg = document.getElementById("marksheetReg");
+    const marksheetGroup = document.getElementById("marksheetGroup");
+    const marksheetType = document.getElementById("marksheetType");
+    const marksheetFather = document.getElementById("marksheetFather");
+    const marksheetMother = document.getElementById("marksheetMother");
+    const marksheetInstitute = document.getElementById("marksheetInstitute");
+    const marksheetGradesBody = document.getElementById("marksheetGradesBody");
+
+    // Batch File upload elements
+    const ctgBatchFileForm = document.getElementById("ctgBatchFileForm");
+    const fileInput = document.getElementById("fileInput");
+    const dropZone = document.getElementById("dropZone");
+    const fileInfo = document.getElementById("fileInfo");
+    const fileName = document.getElementById("fileName");
+    const demoModeCheck = document.getElementById("demoMode");
+    const submitBulkBtn = document.getElementById("submitBulkBtn");
+
+    // Paste Rolls elements
+    const ctgPasteForm = document.getElementById("ctgPasteForm");
+    const pastedRollsInput = document.getElementById("pastedRolls");
+    const pasteDemoModeCheck = document.getElementById("pasteDemoMode");
+    const submitPasteBtn = document.getElementById("submitPasteBtn");
+
+    // Progress elements
+    const progressCard = document.getElementById("progressCard");
+    const progressTitle = document.getElementById("progressTitle");
+    const progressBar = document.getElementById("progressBar");
+    const progressPercentBadge = document.getElementById("progressPercentBadge");
+    const statusMessage = document.getElementById("statusMessage");
+    const studentCounter = document.getElementById("studentCounter");
+
+    // Download & Navigation elements
+    const downloadSection = document.getElementById("downloadSection");
+    const downloadXlsxBtn = document.getElementById("downloadXlsxBtn");
+    const downloadCsvBtn = document.getElementById("downloadCsvBtn");
+    const openAnalysisBtn = document.getElementById("openAnalysisBtn");
+
+    // Results table elements
+    const resultsBody = document.getElementById("resultsBody");
+    const resultsCount = document.getElementById("resultsCount");
+
+    let eventSource = null;
+    let extractedCount = 0;
+
+    // ==========================================
+    // KNOWN CHATTOGRAM INSTITUTIONS
+    // ==========================================
+    const KNOWN_INSTITUTIONS = {
+        "133008": {
+            name: "CHITTAGONG COLLEGE",
+            address: "College Road, Chawkbazar, Chattogram - 4203, Bangladesh",
+            eiin: "133008"
+        },
+        "138012": {
+            name: "S ALAM COLLEGIATE SCHOOL AND COLLEGE",
+            address: "Karnaphuli, Chattogram, Bangladesh",
+            eiin: "138012"
+        },
+        "104532": {
+            name: "GOVT. COMMERCE COLLEGE",
+            address: "Agrabad, Chattogram - 4100, Bangladesh",
+            eiin: "104532"
+        },
+        "104533": {
+            name: "GOVT. CITY COLLEGE",
+            address: "Ice Factory Road, Chattogram - 4000, Bangladesh",
+            eiin: "104533"
+        },
+        "104534": {
+            name: "GOVERNMENT MOHSIN COLLEGE",
+            address: "College Road, Chawkbazar, Chattogram - 4203, Bangladesh",
+            eiin: "104534"
+        },
+        "104537": {
+            name: "GOVT. WOMEN'S COLLEGE",
+            address: "Nasirabad, Chattogram, Bangladesh",
+            eiin: "104537"
+        },
+        "104052": {
+            name: "CHITTAGONG CANTONMENT PUBLIC COLLEGE",
+            address: "Chittagong Cantonment, Chattogram - 4220, Bangladesh",
+            eiin: "104052"
+        },
+        "104050": {
+            name: "BAF SHAHEEN COLLEGE CHITTAGONG",
+            address: "Patenga, Chattogram, Bangladesh",
+            eiin: "104050"
+        },
+        "104505": {
+            name: "CHITTAGONG COLLEGIATE SCHOOL",
+            address: "Ice Factory Road, Chattogram, Bangladesh",
+            eiin: "104505"
+        },
+        "104753": {
+            name: "FAUJDARHAT CADET COLLEGE",
+            address: "Faujdarhat, Sitakunda, Chattogram, Bangladesh",
+            eiin: "104753"
+        }
+    };
+
+    function normalizeInstituteKey(name) {
+        if (!name) return "";
+        return name.toUpperCase().replace(/[^A-Z0-9]/g, " ").replace(/\s+/g, " ").trim();
+    }
+
+    function getSavedEiinOverride(instName) {
+        if (!instName) return "";
+        try {
+            const key = "eiin_override_" + normalizeInstituteKey(instName);
+            return localStorage.getItem(key) || "";
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function saveEiinOverride(instName, eiin) {
+        if (!instName || !eiin) return;
+        try {
+            const key = "eiin_override_" + normalizeInstituteKey(instName);
+            localStorage.setItem(key, String(eiin).trim());
+        } catch (e) {}
+    }
+
+    function resolveInstitutionInfo(rawInstName, rawEiin, rawAddress) {
+        let instName = (rawInstName || "").trim();
+        let eiin = (rawEiin || "").trim();
+        let address = (rawAddress || "").trim();
+
+        if (eiin && eiin.toUpperCase() === "N/A") eiin = "";
+
+        // Extract 6-digit EIIN embedded in name if present
+        if (!eiin && instName) {
+            const m = instName.match(/\b(\d{6})\b/);
+            if (m) eiin = m[1];
+        }
+
+        // Check user manual override in localStorage
+        const overrideEiin = getSavedEiinOverride(instName);
+        if (overrideEiin) eiin = overrideEiin;
+
+        // Check verified registry
+        if (eiin && KNOWN_INSTITUTIONS[eiin]) {
+            const entry = KNOWN_INSTITUTIONS[eiin];
+            if (!instName || instName.length < 5) instName = entry.name;
+            if (!address) address = entry.address;
+        }
+
+        if (!instName) {
+            instName = "CHITTAGONG COLLEGE";
+            if (!eiin) eiin = "133008";
+            if (!address) address = "College Road, Chawkbazar, Chattogram - 4203, Bangladesh";
+        } else if (!address) {
+            address = "Chattogram, Bangladesh";
+        }
+
+        return {
+            name: instName,
+            eiin: eiin,
+            address: address
+        };
+    }
+
+    function updateMarksheetInstitutionalHeader(info) {
+        const marksheetHeaderInstName = document.getElementById("marksheetHeaderInstName");
+        const marksheetHeaderAddress = document.getElementById("marksheetHeaderAddress");
+        const marksheetHeaderEiin = document.getElementById("marksheetHeaderEiin");
+        if (marksheetHeaderInstName) marksheetHeaderInstName.textContent = info.name || "EDUCATIONAL INSTITUTION";
+        if (marksheetHeaderAddress) marksheetHeaderAddress.textContent = info.address || "Chattogram, Bangladesh";
+        if (marksheetHeaderEiin) marksheetHeaderEiin.textContent = info.eiin || "N/A";
+        try {
+            if (info.eiin) {
+                sessionStorage.setItem("last_eiin", info.eiin);
+            } else {
+                sessionStorage.removeItem("last_eiin");
+            }
+            sessionStorage.setItem("last_inst", info.name || "");
+            sessionStorage.setItem("last_address", info.address || "");
+        } catch (e) {}
+    }
+
+    // Dynamic listener on EIIN editing
+    const marksheetHeaderEiinEl = document.getElementById("marksheetHeaderEiin");
+    let eiinLookupTimer = null;
+    if (marksheetHeaderEiinEl) {
+        marksheetHeaderEiinEl.addEventListener("input", () => {
+            const typedEiin = marksheetHeaderEiinEl.textContent.trim();
+            const currentInst = document.getElementById("marksheetHeaderInstName")?.textContent?.trim() || "";
+            if (/^\d{4,8}$/.test(typedEiin) && currentInst) {
+                saveEiinOverride(currentInst, typedEiin);
+            }
+            if (typedEiin.length >= 5 && /^\d{5,7}$/.test(typedEiin)) {
+                if (KNOWN_INSTITUTIONS[typedEiin]) {
+                    const match = KNOWN_INSTITUTIONS[typedEiin];
+                    const marksheetHeaderInstName = document.getElementById("marksheetHeaderInstName");
+                    const marksheetHeaderAddress = document.getElementById("marksheetHeaderAddress");
+                    if (marksheetHeaderInstName) marksheetHeaderInstName.textContent = match.name;
+                    if (marksheetHeaderAddress) marksheetHeaderAddress.textContent = match.address;
+                    try {
+                        sessionStorage.setItem("last_eiin", match.eiin);
+                        sessionStorage.setItem("last_inst", match.name);
+                        sessionStorage.setItem("last_address", match.address);
+                    } catch (e) {}
+                    return;
+                }
+                clearTimeout(eiinLookupTimer);
+                eiinLookupTimer = setTimeout(async () => {
+                    try {
+                        const resp = await fetch(`/api/lookup-institution?eiin=${encodeURIComponent(typedEiin)}`);
+                        if (!resp.ok) return;
+                        const data = await resp.json();
+                        if (data.found && data.name) {
+                            const marksheetHeaderInstName = document.getElementById("marksheetHeaderInstName");
+                            const marksheetHeaderAddress = document.getElementById("marksheetHeaderAddress");
+                            if (marksheetHeaderInstName) marksheetHeaderInstName.textContent = data.name;
+                            if (marksheetHeaderAddress && data.address) marksheetHeaderAddress.textContent = data.address;
+                            try {
+                                sessionStorage.setItem("last_eiin", data.eiin || typedEiin);
+                                sessionStorage.setItem("last_inst", data.name);
+                                sessionStorage.setItem("last_address", data.address || "");
+                            } catch (e) {}
+                        }
+                    } catch (e) {}
+                }, 250);
+            }
+        });
+    }
+
+    // Print marksheet
+    window.printMarksheet = function() {
+        const instName = document.getElementById("marksheetHeaderInstName")?.textContent?.trim() || "Chattogram Educational Institution";
+        const rawEiin = document.getElementById("marksheetHeaderEiin")?.textContent?.trim() || "";
+        const eiin = (rawEiin && rawEiin.toUpperCase() !== "N/A" && rawEiin.toUpperCase() !== "EIIN") ? rawEiin : "";
+        const studentName = document.getElementById("marksheetName")?.textContent?.trim() || "Student";
+        const roll = document.getElementById("marksheetRoll")?.textContent?.trim() || "";
+        const exam = document.getElementById("marksheetExam")?.textContent?.trim() || "HSC";
+        const year = document.getElementById("marksheetYear")?.textContent?.trim() || "";
+
+        const cleanInst = instName.replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
+        const cleanStudent = studentName.replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
+        const rollPart = roll && roll !== "-" ? ` (Roll ${roll})` : "";
+        const examPart = [exam, year].filter(Boolean).join(" ").trim();
+        const eiinPrefix = eiin ? `${eiin}, ` : "";
+
+        const saveTitle = `${eiinPrefix}${cleanInst} - ${cleanStudent}${rollPart} Marksheet - ${examPart}`.trim();
+
+        const origTitle = document.title;
+        document.title = saveTitle;
+        window.print();
+        setTimeout(() => {
+            document.title = origTitle;
+        }, 1500);
+    };
+
+    // --- 1. Drag & Drop File Upload ---
+    if (dropZone && fileInput) {
+        ['dragenter', 'dragover'].forEach(name => {
+            dropZone.addEventListener(name, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.add('dragover');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(name => {
+            dropZone.addEventListener(name, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.remove('dragover');
+            });
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                displaySelectedFile(files[0].name);
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                displaySelectedFile(fileInput.files[0].name);
+            }
+        });
+    }
+
+    function displaySelectedFile(name) {
+        if (fileName) fileName.textContent = name;
+        if (fileInfo) fileInfo.classList.remove('d-none');
+    }
+
+    // --- 2. Single Roll Instant Lookup (NO REG & NO CAPTCHA) ---
+    if (ctgSingleForm) {
+        ctgSingleForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            const roll = indRollInput.value.trim();
+            const exam = examSelect ? examSelect.value : "hsc";
+            const year = yearSelect ? yearSelect.value : "2026";
+
+            if (!roll) {
+                alert("Please enter a valid Chattogram roll number.");
+                return;
+            }
+
+            submitIndBtn.disabled = true;
+            submitIndBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Fetching Result...`;
+
+            const formData = new FormData();
+            formData.append("exam", exam);
+            formData.append("year", year);
+            formData.append("board", board);
+            formData.append("roll", roll);
+            formData.append("reg", "");
+            formData.append("captcha", "");
+
+            try {
+                const response = await fetch("/api/check-individual", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || "Failed to fetch student result from Chattogram server.");
+                }
+
+                const result = await response.json();
+                if (result.success && result.data) {
+                    renderIndividualMarksheet(result.data);
+                    appendResultRow(result.data);
+                } else {
+                    alert("No result found for Roll " + roll + " under Chattogram Board.");
+                }
+            } catch (err) {
+                console.error("Chattogram Individual Search Error:", err);
+                alert(err.message || "Connection to Chattogram server timed out. Please try again.");
+            } finally {
+                submitIndBtn.disabled = false;
+                submitIndBtn.innerHTML = `<i class="bi bi-search me-1"></i> Get Chattogram Marksheet`;
+            }
+        });
+    }
+
+    function renderIndividualMarksheet(student) {
+        if (!individualResultCard) return;
+        const info = resolveInstitutionInfo(
+            student.Institute,
+            student.EIIN || student.eiin,
+            student.Institution_Address || student.address || ""
+        );
+        updateMarksheetInstitutionalHeader(info);
+        if (!info.eiin && student.Institute) {
+            fetch(`/api/lookup-institution?institute=${encodeURIComponent(student.Institute)}&board=Chattogram`)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    if (data && data.found && data.eiin) {
+                        updateMarksheetInstitutionalHeader({
+                            name: info.name || data.name,
+                            eiin: data.eiin,
+                            address: data.address || info.address
+                        });
+                    }
+                })
+                .catch(() => {});
+        }
+
+        marksheetName.textContent = student.Name || "STUDENT NAME";
+        marksheetExam.textContent = (student.Exam || "HSC").toUpperCase();
+        marksheetYear.textContent = student.Year || "2026";
+        marksheetBoard.textContent = "CHATTOGRAM";
+        marksheetRoll.textContent = student.Roll || "-";
+        marksheetReg.textContent = student.Registration || "N/A";
+        marksheetGroup.textContent = student.Group || "GENERAL";
+        marksheetType.textContent = student.Type || "REGULAR";
+        marksheetFather.textContent = student["Father Name"] || student.Father_Name || "-";
+        marksheetMother.textContent = student["Mother Name"] || student.Mother_Name || "-";
+        marksheetInstitute.textContent = student.Institute || info.name || "-";
+
+        const isPassed = (student.Result || "").toUpperCase().includes("PASS");
+        const gpaVal = student.GPA || "0.00";
+
+        marksheetGpa.textContent = gpaVal;
+        if (isPassed) {
+            marksheetResultBadge.className = "badge bg-teal-subtle text-teal fs-7 px-3 py-2 border border-teal-subtle d-inline-block";
+            marksheetResultBadge.innerHTML = `RESULT: PASSED &bull; GPA: <strong id="marksheetGpa">${gpaVal}</strong>`;
+        } else {
+            marksheetResultBadge.className = "badge bg-danger-subtle text-danger fs-7 px-3 py-2 border border-danger-subtle d-inline-block";
+            marksheetResultBadge.innerHTML = `RESULT: ${student.Result || 'FAILED'}`;
+        }
+
+        marksheetGradesBody.innerHTML = "";
+        const grades = student.Subject_Grades || {};
+        const entries = Object.entries(grades);
+
+        if (entries.length > 0) {
+            entries.forEach(([subName, subGrade]) => {
+                const tr = document.createElement("tr");
+                let badgeClass = "badge bg-light text-dark border";
+                if (subGrade.includes("A+")) badgeClass = "badge bg-success text-white";
+                else if (subGrade.includes("A") || subGrade.includes("A-")) badgeClass = "badge bg-success-subtle text-success border border-success-subtle";
+                else if (subGrade.includes("F")) badgeClass = "badge bg-danger text-white";
+
+                tr.innerHTML = `
+                    <td class="text-start py-1.5">${subName}</td>
+                    <td class="py-1.5"><span class="${badgeClass} px-2 py-0.5 rounded">${subGrade}</span></td>
+                `;
+                marksheetGradesBody.appendChild(tr);
+            });
+        } else {
+            marksheetGradesBody.innerHTML = `
+                <tr><td colspan="2" class="text-center text-muted py-2">Subject details not available</td></tr>
+            `;
+        }
+
+        individualResultCard.style.display = "block";
+        individualResultCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    // --- 3. Batch File Upload ---
+    if (ctgBatchFileForm) {
+        ctgBatchFileForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            if (!fileInput.files || fileInput.files.length === 0) {
+                alert("Please select or drop a CSV or Excel file containing student rolls.");
+                return;
+            }
+
+            const exam = examSelect ? examSelect.value : "hsc";
+            const year = yearSelect ? yearSelect.value : "2026";
+            const isDemo = demoModeCheck ? demoModeCheck.checked : false;
+
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+            formData.append("exam", exam);
+            formData.append("year", year);
+            formData.append("board", board);
+            formData.append("demo_mode", isDemo ? "true" : "false");
+
+            submitBulkBtn.disabled = true;
+            submitBulkBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Initializing...`;
+
+            resetExtractionUI();
+
+            try {
+                const resp = await fetch("/api/start-extraction", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.detail || "Failed to start Chattogram extraction.");
+                }
+
+                const data = await resp.json();
+                connectSse(data.job_id, data.total_students, submitBulkBtn, `<i class="bi bi-play-circle-fill me-1"></i> Start Batch Extraction`);
+
+            } catch (err) {
+                alert(err.message || "Failed to start extraction.");
+                progressCard.style.display = "none";
+                submitBulkBtn.disabled = false;
+                submitBulkBtn.innerHTML = `<i class="bi bi-play-circle-fill me-1"></i> Start Batch Extraction`;
+            }
+        });
+    }
+
+    // --- 4. Paste Rolls Directly ---
+    if (ctgPasteForm) {
+        ctgPasteForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            const rawText = pastedRollsInput ? pastedRollsInput.value.trim() : "";
+            if (!rawText) {
+                alert("Please enter or paste at least one roll number.");
+                return;
+            }
+
+            const exam = examSelect ? examSelect.value : "hsc";
+            const year = yearSelect ? yearSelect.value : "2026";
+            const isDemo = pasteDemoModeCheck ? pasteDemoModeCheck.checked : false;
+
+            const formData = new FormData();
+            formData.append("rolls", rawText);
+            formData.append("exam", exam);
+            formData.append("year", year);
+            formData.append("board", board);
+            formData.append("demo_mode", isDemo ? "true" : "false");
+
+            submitPasteBtn.disabled = true;
+            submitPasteBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Processing Rolls...`;
+
+            resetExtractionUI();
+
+            try {
+                const resp = await fetch("/api/start-extraction-rolls", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.detail || "Failed to process pasted rolls.");
+                }
+
+                const data = await resp.json();
+                connectSse(data.job_id, data.total_students, submitPasteBtn, `<i class="bi bi-cpu me-1"></i> Extract Pasted Rolls`);
+
+            } catch (err) {
+                alert(err.message || "Error processing pasted rolls.");
+                progressCard.style.display = "none";
+                submitPasteBtn.disabled = false;
+                submitPasteBtn.innerHTML = `<i class="bi bi-cpu me-1"></i> Extract Pasted Rolls`;
+            }
+        });
+    }
+
+    function resetExtractionUI() {
+        extractedCount = 0;
+        resultsBody.innerHTML = "";
+        resultsCount.textContent = "0 Students";
+        progressCard.style.display = "block";
+        progressTitle.textContent = "Extracting Chattogram results via direct portal...";
+        progressBar.style.width = "0%";
+        progressBar.className = "progress-bar progress-bar-striped progress-bar-animated bg-teal";
+        progressPercentBadge.textContent = "0%";
+        progressPercentBadge.className = "badge bg-teal rounded-pill px-2.5 py-1 text-white";
+        statusMessage.innerHTML = "Initializing fast connection...";
+        studentCounter.textContent = "0 / 0";
+        downloadSection.style.setProperty("display", "none", "important");
+    }
+
+    function connectSse(jobId, totalStudents, triggerBtn, originalBtnHtml) {
+        if (eventSource) eventSource.close();
+
+        eventSource = new EventSource(`/api/progress-stream/${jobId}`);
+
+        eventSource.onmessage = (e) => {
+            let msg;
+            try {
+                msg = JSON.parse(e.data);
+            } catch (err) {
+                return;
+            }
+
+            if (msg.type === "progress") {
+                const cur = msg.current;
+                const tot = msg.total || totalStudents;
+                const pct = msg.percent;
+                const res = msg.data;
+
+                progressBar.style.width = `${pct}%`;
+                progressPercentBadge.textContent = `${pct}%`;
+                studentCounter.textContent = `${cur} / ${tot}`;
+                statusMessage.innerHTML = `<i class="bi bi-lightning-charge text-teal me-1"></i> Scraped: Roll <strong>${res.Roll}</strong> (${res.Name})`;
+
+                appendResultRow(res);
+
+            } else if (msg.type === "completed") {
+                progressBar.style.width = "100%";
+                progressBar.className = "progress-bar bg-teal";
+                progressPercentBadge.textContent = "100%";
+                progressPercentBadge.className = "badge bg-teal rounded-pill px-2.5 py-1 text-white";
+                progressTitle.textContent = "Chattogram Results Extracted Successfully!";
+                statusMessage.innerHTML = `<i class="bi bi-check-circle-fill text-teal me-1"></i> Loaded ${msg.total} student records via direct portal!`;
+
+                downloadXlsxBtn.href = msg.download_xlsx;
+                downloadCsvBtn.href = msg.download_csv;
+                if (msg.excel_filename) downloadXlsxBtn.setAttribute("download", msg.excel_filename);
+                if (msg.csv_filename) downloadCsvBtn.setAttribute("download", msg.csv_filename);
+                downloadSection.style.setProperty("display", "flex", "important");
+
+                sessionStorage.setItem("last_job_id", jobId);
+                if (msg.analysis) {
+                    sessionStorage.setItem("last_analysis", JSON.stringify(msg.analysis));
+                    try {
+                        if (msg.analysis.eiin) sessionStorage.setItem("last_eiin", msg.analysis.eiin);
+                        else sessionStorage.removeItem("last_eiin");
+                        sessionStorage.setItem("last_inst", msg.analysis.institute || "");
+                        sessionStorage.setItem("last_address", msg.analysis.address || "");
+                    } catch (e) {}
+                }
+                if (openAnalysisBtn) {
+                    openAnalysisBtn.addEventListener("click", () => {
+                        window.location.href = `/result-analysis?job_id=${jobId}`;
+                    });
+                }
+
+                triggerBtn.disabled = false;
+                triggerBtn.innerHTML = originalBtnHtml;
+                eventSource.close();
+
+            } else if (msg.type === "error") {
+                progressBar.className = "progress-bar bg-danger";
+                statusMessage.innerHTML = `<i class="bi bi-exclamation-triangle-fill text-danger me-1"></i> ${msg.message}`;
+                alert(msg.message);
+
+                triggerBtn.disabled = false;
+                triggerBtn.innerHTML = originalBtnHtml;
+                eventSource.close();
+            }
+        };
+
+        eventSource.onerror = () => {
+            console.error("SSE stream error");
+        };
+    }
+
+    function appendResultRow(data) {
+        const placeholder = document.getElementById("emptyRowPlaceholder");
+        if (placeholder) placeholder.remove();
+
+        extractedCount++;
+        resultsCount.textContent = `${extractedCount} Students`;
+
+        const row = document.createElement("tr");
+        const isPassed = (data.Result || "").toUpperCase().includes("PASS");
+        const gpa = data.GPA || "0.00";
+
+        let gpaBadge = `<span class="badge bg-secondary-subtle text-secondary">${gpa}</span>`;
+        if (parseFloat(gpa) === 5.0) {
+            gpaBadge = `<span class="badge bg-warning text-dark fw-bold">5.00 A+</span>`;
+        } else if (parseFloat(gpa) >= 4.0) {
+            gpaBadge = `<span class="badge bg-success text-white fw-semibold">${gpa}</span>`;
+        } else if (parseFloat(gpa) > 0) {
+            gpaBadge = `<span class="badge bg-info-subtle text-dark">${gpa}</span>`;
+        }
+
+        const resultBadge = isPassed
+            ? `<span class="badge bg-teal-subtle text-teal border border-teal-subtle"><i class="bi bi-check-circle me-1"></i>PASSED</span>`
+            : `<span class="badge bg-danger-subtle text-danger border border-danger-subtle"><i class="bi bi-x-circle me-1"></i>${data.Result || 'FAILED'}</span>`;
+
+        row.innerHTML = `
+            <td class="ps-4"><strong>${data.Roll || '-'}</strong></td>
+            <td><strong class="text-dark">${data.Name || 'N/A'}</strong></td>
+            <td>${gpaBadge}</td>
+            <td>${resultBadge}</td>
+            <td class="pe-4"><small class="text-muted text-truncate d-inline-block" style="max-width: 240px;" title="${data.Institute || ''}">${data.Institute || '-'}</small></td>
+        `;
+
+        resultsBody.prepend(row);
+    }
+});

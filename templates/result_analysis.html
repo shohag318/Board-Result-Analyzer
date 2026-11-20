@@ -35,8 +35,8 @@
                 </button>
                 <input type="file" id="analysisFileInput" accept=".csv, .xlsx, .xls" class="d-none">
 
-                <button type="button" id="printAnalysisBtn" class="btn btn-sm btn-outline-secondary rounded-pill px-3 shadow-xs">
-                    <i class="bi bi-printer me-1"></i> Print Report
+                <button type="button" id="printAnalysisBtn" class="btn btn-sm btn-outline-danger rounded-pill px-3 shadow-xs fw-semibold" title="Generate Complete Multi-Page PDF Report with Cover Page & Index">
+                    <i class="bi bi-file-earmark-pdf-fill me-1"></i> Print / PDF Report
                 </button>
 
                 <a id="exportAnalysisExcelBtn" href="#" class="btn btn-sm btn-success rounded-pill px-3 fw-semibold shadow-xs">
@@ -1242,7 +1242,8 @@
                                             <div class="col-12 col-md-4">
                                                 <label for="failTablesCategoryFilter" class="form-label small fw-bold text-secondary mb-1">FAIL CATEGORY:</label>
                                                 <select id="failTablesCategoryFilter" class="form-select form-select-sm">
-                                                    <option value="ALL">All Categories (1-Sub, 2-Sub & 3+ Sub)</option>
+                                                    <option value="ALL">All Categories (Matrix & 1-Sub, 2-Sub, 3+ Sub)</option>
+                                                    <option value="summary_matrix">Fail Subject Summary Matrix (1 to 5+ Subjects)</option>
                                                     <option value="one_subject_fail">One Subject Fail (Without 4th Subject)</option>
                                                     <option value="two_subject_fail">Two Subject Fail (Without 4th Subject)</option>
                                                     <option value="three_plus_subject_fail">Three or More Subject Fail (Without 4th Subject)</option>
@@ -1270,6 +1271,45 @@
                                     <span id="wordCopyToastText">Table copied to clipboard! You can now paste directly into Microsoft Word (Ctrl + V).</span>
                                 </div>
 
+                                <!-- PRIMARY OVERVIEW: FAIL SUBJECT SUMMARY MATRIX (AT FIRST) -->
+                                <div class="card border shadow-sm rounded-3 mb-4 bg-white" id="failSummaryMatrixCard">
+                                    <div class="card-header bg-white py-2.5 px-3 border-bottom d-flex flex-wrap justify-content-between align-items-center gap-2">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="badge bg-danger text-white fw-bold px-2.5 py-1">
+                                                <i class="bi bi-grid-3x3-gap-fill me-1"></i> FAIL SUBJECT MATRIX
+                                            </span>
+                                            <h6 class="fw-bold text-dark mb-0 fs-6">Fail Subject Summary (Science, Business Studies, Humanities, SubTotal, Total)</h6>
+                                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle small">Without 4th Subject</span>
+                                        </div>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <button type="button" id="copyFailMatrixWordBtn" class="btn btn-sm btn-outline-dark fw-semibold shadow-xs py-1 px-2.5" title="Copy this matrix formatted for direct paste into Microsoft Word">
+                                                <i class="bi bi-clipboard2-check me-1 text-primary"></i> Copy for Word
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="card-body p-3">
+                                        <div class="table-responsive">
+                                            <table class="table table-bordered text-center align-middle mb-0 word-format-table" id="failSummaryMatrixTable" style="border: 2px solid #1e293b; border-collapse: collapse; width: 100%;">
+                                                <!-- Dynamic Content Rendered by JS -->
+                                            </table>
+                                        </div>
+                                        <div class="mt-2 text-muted small d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                            <span><i class="bi bi-info-circle me-1 text-primary"></i> Categorized by exact number of failed subjects (1, 2, 3, 4, 5+) with Regular, Irregular, SubTotal, and Grand Total breakdowns.</span>
+                                            <span class="fw-semibold text-secondary" id="failMatrixTotalSummary">Total Failed Students: 0</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Detailed Subject-Wise Breakdown Heading -->
+                                <div class="d-flex align-items-center justify-content-between mb-3" id="failSubjBreakdownHeading">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="badge bg-secondary-subtle text-dark border px-2 py-1 fw-bold fs-7">
+                                            <i class="bi bi-table me-1"></i> SUBJECT BREAKDOWN
+                                        </span>
+                                        <h6 class="fw-bold text-secondary mb-0">Detailed Subject-Wise Failure Tables (All & Group-Wise)</h6>
+                                    </div>
+                                </div>
+
                                 <!-- Dynamic Tables Container -->
                                 <div id="failTablesContainer" class="row g-4">
                                     <!-- Dynamic tables rendered by JS -->
@@ -1284,5 +1324,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/result_analysis.js?v=4.1.0"></script>
+<script src="/static/js/result_analysis.js?v=4.5.0"></script>
 {% endblock %}

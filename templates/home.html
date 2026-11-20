@@ -18,7 +18,7 @@
             <div class="card border-0 shadow-sm rounded-4 p-3 bg-white h-100">
                 <div class="text-success fs-3 mb-1"><i class="bi bi-lightning-charge-fill"></i></div>
                 <div class="fw-bold fs-4 text-dark">Roll-Only</div>
-                <small class="text-muted">Direct Fast Cumilla Lookup</small>
+                <small class="text-muted">Direct Cumilla & Ctg Lookup</small>
             </div>
         </div>
         <div class="col-6 col-md-3">
@@ -33,132 +33,6 @@
                 <div class="text-warning fs-3 mb-1"><i class="bi bi-bar-chart-fill"></i></div>
                 <div class="fw-bold fs-4 text-dark">Deep Analytics</div>
                 <small class="text-muted">Merit, 1-Sub & 2-Sub Fails</small>
-            </div>
-        </div>
-    </div>
-
-    <!-- 3 Main Gateway Cards -->
-    <div class="row g-4 mb-5">
-        <!-- Card 1: Board Result -->
-        <div class="col-lg-4">
-            <div class="card h-100 border-0 shadow-sm rounded-4 portal-card card-blue p-4 d-flex flex-column justify-content-between">
-                <div>
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <div class="portal-icon-wrapper bg-primary-subtle text-primary">
-                            <i class="bi bi-building fs-3"></i>
-                        </div>
-                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-2.5 py-1 fs-8 fw-semibold">
-                            National Portal
-                        </span>
-                    </div>
-                    <h3 class="fw-bold text-dark fs-4 mb-2">Board Result</h3>
-                    <p class="text-secondary small mb-3">
-                        Query results from official <a href="http://www.educationboardresults.gov.bd/" target="_blank" class="fw-semibold text-primary">educationboardresults.gov.bd</a> for all general education boards.
-                    </p>
-                    <ul class="list-unstyled text-secondary small mb-4 d-flex flex-column gap-2">
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-primary"></i>
-                            <span>Dhaka, Rajshahi, Chittagong, Barisal & more</span>
-                        </li>
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-primary"></i>
-                            <span>Single roll lookup with live captcha resolver</span>
-                        </li>
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-primary"></i>
-                            <span>Batch CSV/Excel upload with real-time SSE progress</span>
-                        </li>
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-primary"></i>
-                            <span>Download results in formatted Excel (.xlsx) & CSV</span>
-                        </li>
-                    </ul>
-                </div>
-                <a href="/board-result" class="btn btn-primary w-100 rounded-3 py-2.5 fw-semibold shadow-xs">
-                    Open Board Result Portal <i class="bi bi-arrow-right ms-1"></i>
-                </a>
-            </div>
-        </div>
-
-        <!-- Card 2: Cumilla Board Result -->
-        <div class="col-lg-4">
-            <div class="card h-100 border-0 shadow-sm rounded-4 portal-card card-green p-4 d-flex flex-column justify-content-between">
-                <div>
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <div class="portal-icon-wrapper bg-success-subtle text-success">
-                            <i class="bi bi-lightning-charge-fill fs-3"></i>
-                        </div>
-                        <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2.5 py-1 fs-8 fw-semibold">
-                            ⚡ Fast Direct Server
-                        </span>
-                    </div>
-                    <h3 class="fw-bold text-dark fs-4 mb-2">Cumilla Board Result</h3>
-                    <p class="text-secondary small mb-3">
-                        Dedicated high-speed gateway directly connected to <a href="https://hscresult.comillaboard.gov.bd/" target="_blank" class="fw-semibold text-success">hscresult.comillaboard.gov.bd</a> (HSC) and <a href="https://result19.comillaboard.gov.bd/SSCRCBY26/individual//" target="_blank" class="fw-semibold text-success">result19.comillaboard.gov.bd/SSCRCBY26/individual/</a> (SSC).
-                    </p>
-                    <ul class="list-unstyled text-secondary small mb-4 d-flex flex-column gap-2">
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-success"></i>
-                            <span class="fw-bold text-success">Roll Number ONLY (No Reg & No Captcha!)</span>
-                        </li>
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-success"></i>
-                            <span>Instant sub-second transcript retrieval</span>
-                        </li>
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-success"></i>
-                            <span>Batch processing for entire college sections</span>
-                        </li>
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-success"></i>
-                            <span>Official marksheet display with print ready transcript</span>
-                        </li>
-                    </ul>
-                </div>
-                <a href="/cumilla-result" class="btn btn-success w-100 rounded-3 py-2.5 fw-semibold shadow-xs text-white">
-                    Open Cumilla Portal <i class="bi bi-arrow-right ms-1"></i>
-                </a>
-            </div>
-        </div>
-
-        <!-- Card 3: Result Analysis -->
-        <div class="col-lg-4">
-            <div class="card h-100 border-0 shadow-sm rounded-4 portal-card card-purple p-4 d-flex flex-column justify-content-between">
-                <div>
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <div class="portal-icon-wrapper bg-info-subtle text-primary">
-                            <i class="bi bi-bar-chart-line-fill fs-3"></i>
-                        </div>
-                        <span class="badge bg-info-subtle text-primary border border-info-subtle rounded-pill px-2.5 py-1 fs-8 fw-semibold">
-                            📊 Institutional BI
-                        </span>
-                    </div>
-                    <h3 class="fw-bold text-dark fs-4 mb-2">Result Analysis</h3>
-                    <p class="text-secondary small mb-3">
-                        Dedicated analytical dashboard delivering deep institutional insights, subject grade rosters, and fail diagnostics.
-                    </p>
-                    <ul class="list-unstyled text-secondary small mb-4 d-flex flex-column gap-2">
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-primary"></i>
-                            <span>Subject-wise breakdown (A+, A, A-, B, C, D, F)</span>
-                        </li>
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-primary"></i>
-                            <span>Merit position ranking by GPA & grade distribution</span>
-                        </li>
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-primary"></i>
-                            <span>1-Subject & 2-Subject fail rosters with subject names</span>
-                        </li>
-                        <li class="d-flex align-items-center gap-2">
-                            <i class="bi bi-check-circle-fill text-primary"></i>
-                            <span>Export comprehensive multi-sheet Excel & PDF reports</span>
-                        </li>
-                    </ul>
-                </div>
-                <a href="/result-analysis" class="btn btn-outline-primary w-100 rounded-3 py-2.5 fw-semibold shadow-xs">
-                    Open Result Analysis <i class="bi bi-arrow-right ms-1"></i>
-                </a>
             </div>
         </div>
     </div>
@@ -189,9 +63,9 @@
                 </a>
             </div>
             <div class="col-4 col-md-3 col-lg-2">
-                <a href="/board-result" class="board-badge p-2.5 rounded-3 border d-block text-decoration-none">
-                    <span class="fw-bold text-dark d-block">Chattogram</span>
-                    <small class="text-muted fs-8">Chittagong</small>
+                <a href="/chattogram-result" class="board-badge p-2.5 rounded-3 border border-teal-subtle bg-teal-subtle d-block text-decoration-none">
+                    <span class="fw-bold text-teal d-block">Chattogram ⚡</span>
+                    <small class="text-teal fs-8">Direct Portal</small>
                 </a>
             </div>
             <div class="col-4 col-md-3 col-lg-2">

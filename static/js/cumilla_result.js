@@ -68,6 +68,242 @@ document.addEventListener("DOMContentLoaded", () => {
     let eventSource = null;
     let extractedCount = 0;
 
+    // ==========================================
+    // KNOWN INSTITUTIONS & CUMILLA DEFAULTS
+    // ==========================================
+    const KNOWN_INSTITUTIONS = {
+        "132092": {
+            name: "CUMILLA SHIKKHA BOARD GOVT. MODEL COLLEGE",
+            address: "Kotbari Road, Cumilla Sadar, Cumilla - 3500, Bangladesh",
+            eiin: "132092"
+        },
+        "105820": {
+            name: "COMILLA AJIT GUHA COLLEGE",
+            address: "Chawkbazar, Cumilla Sadar, Cumilla - 3500, Bangladesh",
+            eiin: "105820"
+        },
+        "105814": {
+            name: "CUMILLA VICTORIA GOVT. COLLEGE",
+            address: "Victoria College Road, Cumilla Sadar, Cumilla - 3500, Bangladesh",
+            eiin: "105814"
+        },
+        "105786": {
+            name: "CUMILLA ZILLA SCHOOL",
+            address: "Kandirpar, Cumilla Sadar, Cumilla, Bangladesh",
+            eiin: "105786"
+        },
+        "106579": {
+            name: "FENI GOVT. COLLEGE",
+            address: "College Road, Feni - 3900, Bangladesh",
+            eiin: "106579"
+        },
+        "103284": {
+            name: "BRAHMANBARIA GOVT. COLLEGE",
+            address: "College Road, Brahmanbaria - 3400, Bangladesh",
+            eiin: "103284"
+        },
+        "103597": {
+            name: "CHANDPUR GOVT. COLLEGE",
+            address: "Stadium Road, Chandpur - 3600, Bangladesh",
+            eiin: "103597"
+        },
+        "107541": {
+            name: "NOAKHALI GOVT. COLLEGE",
+            address: "Maijdee Court, Noakhali - 3800, Bangladesh",
+            eiin: "107541"
+        },
+        "107386": {
+            name: "BANDERHAT HIGH SCHOOL & COLLEGE",
+            address: "Banderhat, Lakshmipur, Bangladesh",
+            eiin: "107386"
+        },
+        "107977": {
+            name: "DHAKA COLLEGE",
+            address: "Mirpur Road, Dhanmondi, Dhaka - 1205, Bangladesh",
+            eiin: "107977"
+        }
+    };
+
+    function normalizeInstKey(name) {
+        return (name || "").toString().toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+    }
+
+    function getSavedEiinOverride(instName) {
+        try {
+            const key = normalizeInstKey(instName);
+            if (!key) return "";
+            return localStorage.getItem(`eiin_override::${key}`) || "";
+        } catch (e) { return ""; }
+    }
+
+    function saveEiinOverride(instName, eiin) {
+        try {
+            const key = normalizeInstKey(instName);
+            if (!key) return;
+            if (eiin && /^\d{4,8}$/.test(eiin)) {
+                localStorage.setItem(`eiin_override::${key}`, eiin);
+            }
+        } catch (e) {}
+    }
+
+    function resolveInstitutionInfo(rawInstitute, rawEiin, rawAddress) {
+        let eiin = (rawEiin || "").toString().trim();
+        if (["nan", "none", "n/a", "-", "null", "undefined"].includes(eiin.toLowerCase())) eiin = "";
+        let instName = (rawInstitute || "").toString().trim();
+        if (["nan", "none", "n/a", "-", "null", "undefined"].includes(instName.toLowerCase())) instName = "";
+        let address = (rawAddress || "").toString().trim();
+        if (["nan", "none", "n/a", "-", "null", "undefined"].includes(address.toLowerCase())) address = "";
+
+        if (instName) {
+            const m = instName.match(/\(?\b(\d{5,7})\b\)?/);
+            if (m) {
+                if (!eiin) eiin = m[1];
+                instName = instName.replace(/\(?\b\d{5,7}\b\)?/g, "").replace(/[-()]/g, " ").replace(/\s+/g, " ").trim();
+            }
+        }
+
+        if (!eiin && instName) {
+            eiin = getSavedEiinOverride(instName);
+        }
+
+        if (eiin && KNOWN_INSTITUTIONS[eiin]) {
+            const match = KNOWN_INSTITUTIONS[eiin];
+            return {
+                name: instName || match.name,
+                eiin: eiin,
+                address: address || match.address
+            };
+        }
+
+        if (!eiin && instName) {
+            const upper = instName.toUpperCase();
+            for (const [kEiin, data] of Object.entries(KNOWN_INSTITUTIONS)) {
+                if (upper === data.name || upper.includes(data.name)) {
+                    eiin = kEiin;
+                    if (!address) address = data.address;
+                    break;
+                }
+            }
+        }
+
+        const cumillaDistricts = ["Cumilla", "Comilla", "Feni", "Brahmanbaria", "Chandpur", "Noakhali", "Lakshmipur", "Laxmipur"];
+        if (!address && instName) {
+            for (const dist of cumillaDistricts) {
+                if (new RegExp(`\\b${dist}\\b`, "i").test(instName)) {
+                    const disp = dist.toLowerCase() === "comilla" ? "Cumilla" : (dist.toLowerCase() === "laxmipur" ? "Lakshmipur" : dist);
+                    address = `${disp}, Bangladesh`;
+                    break;
+                }
+            }
+        }
+
+        if (!instName) {
+            instName = "CUMILLA SHIKKHA BOARD GOVT. MODEL COLLEGE";
+            if (!eiin) eiin = "132092";
+            if (!address) address = "Kotbari Road, Cumilla Sadar, Cumilla - 3500, Bangladesh";
+        } else if (!address) {
+            address = "Cumilla, Bangladesh";
+        }
+
+        return {
+            name: instName,
+            eiin: eiin,
+            address: address
+        };
+    }
+
+    function updateMarksheetInstitutionalHeader(info) {
+        const marksheetHeaderInstName = document.getElementById("marksheetHeaderInstName");
+        const marksheetHeaderAddress = document.getElementById("marksheetHeaderAddress");
+        const marksheetHeaderEiin = document.getElementById("marksheetHeaderEiin");
+        if (marksheetHeaderInstName) marksheetHeaderInstName.textContent = info.name || "EDUCATIONAL INSTITUTION";
+        if (marksheetHeaderAddress) marksheetHeaderAddress.textContent = info.address || "Cumilla, Bangladesh";
+        if (marksheetHeaderEiin) marksheetHeaderEiin.textContent = info.eiin || "N/A";
+        try {
+            if (info.eiin) {
+                sessionStorage.setItem("last_eiin", info.eiin);
+            } else {
+                sessionStorage.removeItem("last_eiin");
+            }
+            sessionStorage.setItem("last_inst", info.name || "");
+            sessionStorage.setItem("last_address", info.address || "");
+        } catch (e) {}
+    }
+
+    // Dynamic listener on EIIN editing: queries full Bangladesh EIIN database via API
+    const marksheetHeaderEiinEl = document.getElementById("marksheetHeaderEiin");
+    let eiinLookupTimer = null;
+    if (marksheetHeaderEiinEl) {
+        marksheetHeaderEiinEl.addEventListener("input", () => {
+            const typedEiin = marksheetHeaderEiinEl.textContent.trim();
+            const currentInst = document.getElementById("marksheetHeaderInstName")?.textContent?.trim() || "";
+            if (/^\d{4,8}$/.test(typedEiin) && currentInst) {
+                saveEiinOverride(currentInst, typedEiin);
+            }
+            if (typedEiin.length >= 5 && /^\d{5,7}$/.test(typedEiin)) {
+                if (KNOWN_INSTITUTIONS[typedEiin]) {
+                    const match = KNOWN_INSTITUTIONS[typedEiin];
+                    const marksheetHeaderInstName = document.getElementById("marksheetHeaderInstName");
+                    const marksheetHeaderAddress = document.getElementById("marksheetHeaderAddress");
+                    if (marksheetHeaderInstName) marksheetHeaderInstName.textContent = match.name;
+                    if (marksheetHeaderAddress) marksheetHeaderAddress.textContent = match.address;
+                    try {
+                        sessionStorage.setItem("last_eiin", match.eiin);
+                        sessionStorage.setItem("last_inst", match.name);
+                        sessionStorage.setItem("last_address", match.address);
+                    } catch (e) {}
+                    return;
+                }
+                clearTimeout(eiinLookupTimer);
+                eiinLookupTimer = setTimeout(async () => {
+                    try {
+                        const resp = await fetch(`/api/lookup-institution?eiin=${encodeURIComponent(typedEiin)}`);
+                        if (!resp.ok) return;
+                        const data = await resp.json();
+                        if (data.found && data.name) {
+                            const marksheetHeaderInstName = document.getElementById("marksheetHeaderInstName");
+                            const marksheetHeaderAddress = document.getElementById("marksheetHeaderAddress");
+                            if (marksheetHeaderInstName) marksheetHeaderInstName.textContent = data.name;
+                            if (marksheetHeaderAddress && data.address) marksheetHeaderAddress.textContent = data.address;
+                            try {
+                                sessionStorage.setItem("last_eiin", data.eiin || typedEiin);
+                                sessionStorage.setItem("last_inst", data.name);
+                                sessionStorage.setItem("last_address", data.address || "");
+                            } catch (e) {}
+                        }
+                    } catch (e) {}
+                }, 250);
+            }
+        });
+    }
+
+    // Informative Save-As-PDF filename dispatcher for official marksheet
+    window.printMarksheet = function() {
+        const instName = document.getElementById("marksheetHeaderInstName")?.textContent?.trim() || "Cumilla Educational Institution";
+        const rawEiin = document.getElementById("marksheetHeaderEiin")?.textContent?.trim() || "";
+        const eiin = (rawEiin && rawEiin.toUpperCase() !== "N/A" && rawEiin.toUpperCase() !== "EIIN") ? rawEiin : "";
+        const studentName = document.getElementById("marksheetName")?.textContent?.trim() || "Student";
+        const roll = document.getElementById("marksheetRoll")?.textContent?.trim() || "";
+        const exam = document.getElementById("marksheetExam")?.textContent?.trim() || "HSC";
+        const year = document.getElementById("marksheetYear")?.textContent?.trim() || "";
+
+        const cleanInst = instName.replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
+        const cleanStudent = studentName.replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
+        const rollPart = roll && roll !== "-" ? ` (Roll ${roll})` : "";
+        const examPart = [exam, year].filter(Boolean).join(" ").trim();
+        const eiinPrefix = eiin ? `${eiin}, ` : "";
+
+        // Standardized save file name:
+        const saveTitle = `${eiinPrefix}${cleanInst} - ${cleanStudent}${rollPart} Marksheet - ${examPart}`.trim();
+
+        const origTitle = document.title;
+        document.title = saveTitle;
+        window.print();
+        setTimeout(() => {
+            document.title = origTitle;
+        }, 1500);
+    };
+
     // --- 0. Dynamic Gateway Notice (SSC vs HSC) ---
     function updateCumillaGatewayUI() {
         const examVal = (examSelect ? examSelect.value : "hsc").toLowerCase();
@@ -212,28 +448,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function renderIndividualMarksheet(student) {
         if (!individualResultCard) return;
-        // Populate Institutional Header Details (Name, Address, EIIN)
-        const rawInst = student.Institute || "";
-        let instName = rawInst;
-        let eiinVal = "105820";
-        if (rawInst) {
-            const m = rawInst.match(/\(?\b(\d{5,7})\b\)?/);
-            if (m) {
-                eiinVal = m[1];
-                instName = rawInst.replace(/\(?\b\d{5,7}\b\)?/g, "").replace(/[-()]/g, "").trim();
-            }
+        // Dynamically resolve Institutional Header Details (Name, Address, EIIN)
+        const info = resolveInstitutionInfo(
+            student.Institute,
+            student.EIIN || student.eiin,
+            student.Institution_Address || student.address || ""
+        );
+        updateMarksheetInstitutionalHeader(info);
+        if (!info.eiin && student.Institute) {
+            fetch(`/api/lookup-institution?institute=${encodeURIComponent(student.Institute)}&board=Cumilla`)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    if (data && data.found && data.eiin) {
+                        updateMarksheetInstitutionalHeader({
+                            name: info.name || data.name,
+                            eiin: data.eiin,
+                            address: data.address || info.address
+                        });
+                    }
+                })
+                .catch(() => {});
         }
-        const marksheetHeaderInstName = document.getElementById("marksheetHeaderInstName");
-        const marksheetHeaderAddress = document.getElementById("marksheetHeaderAddress");
-        const marksheetHeaderEiin = document.getElementById("marksheetHeaderEiin");
-        if (marksheetHeaderInstName) marksheetHeaderInstName.textContent = instName || "EDUCATIONAL INSTITUTION";
-        if (marksheetHeaderEiin) marksheetHeaderEiin.textContent = eiinVal;
-        try { sessionStorage.setItem("last_eiin", eiinVal); } catch (e) {}
-        if (marksheetHeaderAddress) {
-            const b = (student.Board || "Dhaka").toLowerCase();
-            marksheetHeaderAddress.textContent = b.includes("cumilla") || b.includes("comilla") ? "Kotbari Road, Cumilla Sadar, Cumilla, Bangladesh" : (b.includes("dhaka") ? "Dhaka - 1205, Bangladesh" : `${student.Board || "Education Board"}, Bangladesh`);
-        }
-
 
         marksheetName.textContent = student.Name || "STUDENT NAME";
         marksheetExam.textContent = (student.Exam || "HSC").toUpperCase();
@@ -245,7 +480,7 @@ document.addEventListener("DOMContentLoaded", () => {
         marksheetType.textContent = student.Type || "REGULAR";
         marksheetFather.textContent = student["Father Name"] || student.Father_Name || "-";
         marksheetMother.textContent = student["Mother Name"] || student.Mother_Name || "-";
-        marksheetInstitute.textContent = student.Institute || "-";
+        marksheetInstitute.textContent = student.Institute || info.name || "-";
 
         const isPassed = (student.Result || "").toUpperCase().includes("PASSED");
         const gpaVal = student.GPA || "0.00";
@@ -437,14 +672,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 downloadXlsxBtn.href = msg.download_xlsx;
                 downloadCsvBtn.href = msg.download_csv;
+                if (msg.excel_filename) downloadXlsxBtn.setAttribute("download", msg.excel_filename);
+                if (msg.csv_filename) downloadCsvBtn.setAttribute("download", msg.csv_filename);
                 downloadSection.style.setProperty("display", "flex", "important");
 
                 sessionStorage.setItem("last_job_id", jobId);
                 if (msg.analysis) {
                     sessionStorage.setItem("last_analysis", JSON.stringify(msg.analysis));
-                    if (msg.analysis.eiin) {
-                        try { sessionStorage.setItem("last_eiin", msg.analysis.eiin); } catch (e) {}
-                    }
+                    try {
+                        if (msg.analysis.eiin) sessionStorage.setItem("last_eiin", msg.analysis.eiin);
+                        else sessionStorage.removeItem("last_eiin");
+                        sessionStorage.setItem("last_inst", msg.analysis.institute || "");
+                        sessionStorage.setItem("last_address", msg.analysis.address || "");
+                    } catch (e) {}
                 }
                 if (openAnalysisBtn) {
                     openAnalysisBtn.href = `/result-analysis?job_id=${jobId}`;

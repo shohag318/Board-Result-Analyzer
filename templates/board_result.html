@@ -197,12 +197,12 @@
                         <!-- Official Institutional Header for Marksheet Print -->
                         <div class="institution-header text-center mb-3 pb-2 border-bottom border-2 border-dark" id="marksheetHeaderInstBlock">
 
-                            <h3 class="fw-bold text-dark my-1 text-uppercase" id="marksheetHeaderInstName" style="font-size: 17px;">
+                            <h3 class="fw-bold text-dark my-1 text-uppercase editable-header" id="marksheetHeaderInstName" style="font-size: 17px;" title="Click to edit Institution Name" contenteditable="true" spellcheck="false">
                                 DHAKA COLLEGE
                             </h3>
                             <div class="text-muted small d-flex justify-content-center align-items-center gap-3 flex-wrap" style="font-size: 11px;">
-                                <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Address:</strong> <span id="marksheetHeaderAddress">Dhaka, Bangladesh</span></span>
-                                <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN:</strong> <span id="marksheetHeaderEiin" style="font-family: monospace; font-weight: 700;">107977</span></span>
+                                <span><i class="bi bi-geo-alt-fill text-danger me-1"></i><strong>Address:</strong> <span id="marksheetHeaderAddress" class="editable-header" title="Click to edit Address" contenteditable="true" spellcheck="false">Mirpur Road, Dhanmondi, Dhaka - 1205, Bangladesh</span></span>
+                                <span><i class="bi bi-card-heading text-primary me-1"></i><strong>EIIN:</strong> <span id="marksheetHeaderEiin" class="editable-header" style="font-family: monospace; font-weight: 700;" title="Click to edit EIIN" contenteditable="true" spellcheck="false">107977</span></span>
                             </div>
                         </div>
                         <div class="text-center border-bottom pb-3 mb-3">
@@ -265,9 +265,14 @@
                             </table>
                         </div>
 
+                        <!-- Marksheet Footer for Print -->
+                        <div class="marksheet-print-footer border-top pt-2 mt-3 text-center" style="font-size: 8.5pt; color: #475569; font-weight: 600;">
+                            <span>Genrated By iCT Center &nbsp;&bull;&nbsp; Contact: 01641711531</span>
+                        </div>
+
                         <div class="d-flex justify-content-end gap-2 pt-2">
-                            <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill px-3" onclick="window.print()">
-                                <i class="bi bi-printer me-1"></i> Print Marksheet
+                            <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill px-3" id="printMarksheetBtn" onclick="printMarksheet()">
+                                <i class="bi bi-printer me-1"></i> Print / Save as PDF
                             </button>
                         </div>
                     </div>
@@ -346,5 +351,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/board_result.js?v=4.0.0"></script>
+<script src="/static/js/board_result.js?v=4.3.0"></script>
 {% endblock %}

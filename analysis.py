@@ -18,6 +18,13 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from eiin_lookup import (
+    CURATED_INSTITUTIONS,
+    resolve_institution_address_dynamic,
+    resolve_institution_details,
+    resolve_institution_eiin_dynamic,
+)
+
 
 VALID_GRADES = ["A+", "A", "A-", "B", "C", "D", "F"]
 
@@ -31,47 +38,21 @@ GRADE_POINTS = {
     "F": 0.0
 }
 
-KNOWN_INSTITUTE_EIINS = {
-    "DALTA": "105820",
-    "BANDERHAT": "107386",
-    "CUMILLA GOVT": "105820",
-    "COMILLA GOVT": "105820",
-    "DHAKA CITY": "107977",
-    "NOTRE DAME": "108274",
-    "RAJUK": "108573",
-    "ADAMJEE": "107845",
-    "VIQARUNNISA": "108348",
-    "HOLY CROSS": "108272",
-    "CHITTAGONG COLLEGE": "133008",
-    "SCIENCE COLLEGE": "108035",
-    "MOHAMMADPUR": "132140",
-}
+KNOWN_INSTITUTIONS_REGISTRY = CURATED_INSTITUTIONS
 
 
 def resolve_institution_eiin(raw_val: str = "", institute: str = "", board: str = "") -> str:
-    """Resolves a valid 6-digit EIIN number from records, institute string, or known institutions."""
-    val = str(raw_val or "").strip()
-    if val and val.isdigit() and 4 <= len(val) <= 8:
-        return val
+    """
+    Dynamically resolves a valid EIIN from explicit records, embedded digits,
+    or the comprehensive Bangladesh institutions directory (~29,500+ institutions).
+    Returns "" if the institution is not found rather than substituting an unrelated college's EIIN.
+    """
+    return resolve_institution_eiin_dynamic(raw_val=raw_val, institute=institute, board=board)
 
-    inst = str(institute or "").strip()
-    if inst:
-        m = re.search(r"\b(\d{5,7})\b", inst)
-        if m:
-            return m.group(1)
 
-        inst_upper = inst.upper()
-        for k, v in KNOWN_INSTITUTE_EIINS.items():
-            if k in inst_upper:
-                return v
-
-    b_lower = str(board or "").lower()
-    if "cumilla" in b_lower or "comilla" in b_lower:
-        return "105820"
-    if "dhaka" in b_lower:
-        return "107977"
-
-    return "105820"
+def resolve_institution_address(institute: str = "", eiin: str = "", board: str = "") -> str:
+    """Resolves the physical address dynamically based on EIIN, institute name, and board."""
+    return resolve_institution_address_dynamic(institute=institute, eiin=eiin, board=board)
 
 
 def identify_fourth_subject(subject_grades: Dict[str, str], group: str) -> Optional[str]:
@@ -312,6 +293,139 @@ def normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def build_fail_subject_summary_matrix(normalized_records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Constructs the official Fail Subject Summary Matrix (Without 4th Subject)
+    categorizing students by exact number of failed main subjects:
+    - One Subject
+    - Two Subject
+    - Three Subject
+    - Four Subject
+    - Five or more Subject
+    across Academic Groups (Science, Business Studies, Humanities, etc.)
+    and Candidate Types (Regular, Irregular) with SubTotals and Grand Totals.
+    """
+    def map_matrix_group(raw_grp: str) -> str:
+        g = str(raw_grp or "").strip().upper()
+        if "SCI" in g:
+            return "Science"
+        elif "BUS" in g or "COMMERCE" in g or "B.STUDIES" in g or "MGT" in g:
+            return "Business Studies"
+        elif "HUMAN" in g or "ARTS" in g:
+            return "Humanities"
+        elif not g or g in ["NAN", "NONE", "-", "GENERAL"]:
+            return "General"
+        else:
+            return g.title()
+
+    core_groups = ["Science", "Business Studies", "Humanities"]
+
+    failing_students = []
+    detected_extra = []
+
+    for st in normalized_records:
+        res = st.get("Result", "")
+        if res == "ABSENT":
+            continue
+        fails = st.get("Main_Failed_Subjects") if "Main_Failed_Subjects" in st else [
+            s for s in st.get("Failed_Subjects", []) if s != st.get("Fourth_Subject")
+        ]
+        fail_cnt = len(fails)
+        if fail_cnt >= 1:
+            m_grp = map_matrix_group(st.get("Group", ""))
+            if m_grp not in core_groups and m_grp not in detected_extra:
+                detected_extra.append(m_grp)
+            failing_students.append({
+                "fail_cnt": fail_cnt,
+                "group": m_grp,
+                "is_reg": (st.get("Type", "") == "REGULAR")
+            })
+
+    all_groups = core_groups + sorted(detected_extra)
+
+    row_specs = [
+        ("one_subject", "One Subject", lambda c: c == 1),
+        ("two_subject", "Two Subject", lambda c: c == 2),
+        ("three_subject", "Three Subject", lambda c: c == 3),
+        ("four_subject", "Four Subject", lambda c: c == 4),
+        ("five_plus_subject", "Five or more Subject", lambda c: c >= 5),
+    ]
+
+    matrix_rows = []
+    for row_key, row_label, pred in row_specs:
+        counts = {}
+        row_sub_reg = 0
+        row_sub_irreg = 0
+        for grp in all_groups:
+            reg_c = sum(1 for s in failing_students if pred(s["fail_cnt"]) and s["group"] == grp and s["is_reg"])
+            irreg_c = sum(1 for s in failing_students if pred(s["fail_cnt"]) and s["group"] == grp and not s["is_reg"])
+            counts[grp] = {
+                "regular": reg_c,
+                "irregular": irreg_c,
+                "total": reg_c + irreg_c
+            }
+            row_sub_reg += reg_c
+            row_sub_irreg += irreg_c
+        row_total = row_sub_reg + row_sub_irreg
+        matrix_rows.append({
+            "key": row_key,
+            "label": row_label,
+            "counts": counts,
+            "subtotal": {
+                "regular": row_sub_reg,
+                "irregular": row_sub_irreg,
+                "total": row_total
+            },
+            "total": row_total
+        })
+
+    # SubTotal row (Row 6)
+    subtotal_counts = {}
+    grand_sub_reg = 0
+    grand_sub_irreg = 0
+    for grp in all_groups:
+        grp_reg_tot = sum(r["counts"][grp]["regular"] for r in matrix_rows)
+        grp_irreg_tot = sum(r["counts"][grp]["irregular"] for r in matrix_rows)
+        subtotal_counts[grp] = {
+            "regular": grp_reg_tot,
+            "irregular": grp_irreg_tot,
+            "total": grp_reg_tot + grp_irreg_tot
+        }
+        grand_sub_reg += grp_reg_tot
+        grand_sub_irreg += grp_irreg_tot
+
+    grand_total = grand_sub_reg + grand_sub_irreg
+    subtotal_row = {
+        "label": "SubTotal",
+        "counts": subtotal_counts,
+        "subtotal": {
+            "regular": grand_sub_reg,
+            "irregular": grand_sub_irreg,
+            "total": grand_total
+        },
+        "total": grand_total
+    }
+
+    # Total row (Row 7)
+    total_counts = {}
+    for grp in all_groups:
+        total_counts[grp] = subtotal_counts[grp]["total"]
+
+    total_row = {
+        "label": "Total",
+        "counts": total_counts,
+        "subtotal": grand_total,
+        "total": grand_total
+    }
+
+    return {
+        "groups": all_groups,
+        "rows": matrix_rows,
+        "subtotal_row": subtotal_row,
+        "total_row": total_row
+    }
+
+
 def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Computes all analytical aggregations across the given list of student records,
@@ -340,6 +454,12 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             "one_subject_fail": {"total": 0, "subjects_summary": {}, "students": []},
             "two_subject_fail": {"total": 0, "subjects_summary": {}, "pair_summary": {}, "students": []},
             "multi_subject_fail": {"total": 0, "students": []},
+            "fail_subject_summary_matrix": {
+                "groups": ["Science", "Business Studies", "Humanities"],
+                "rows": [],
+                "subtotal_row": {"label": "SubTotal", "counts": {}, "subtotal": {"regular": 0, "irregular": 0, "total": 0}, "total": 0},
+                "total_row": {"label": "Total", "counts": {}, "subtotal": 0, "total": 0}
+            },
             "gpa_distribution": {},
             "available_groups": [],
             "available_types": []
@@ -939,25 +1059,45 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     all_institutes = [
         str(r.get("Institute", "")).strip()
         for r in normalized
-        if r.get("Institute") and str(r.get("Institute")).strip().lower() not in ["", "nan", "none", "-"]
+        if r.get("Institute") and str(r.get("Institute")).strip().lower() not in ["", "nan", "none", "-", "n/a"]
     ]
     from collections import Counter
     top_institute = Counter(all_institutes).most_common(1)[0][0] if all_institutes else ""
 
+    all_boards = [
+        str(r.get("Board", "")).strip()
+        for r in normalized
+        if r.get("Board") and str(r.get("Board")).strip().lower() not in ["", "nan", "none", "-", "n/a"]
+    ]
+    top_board = Counter(all_boards).most_common(1)[0][0] if all_boards else ""
+
     all_eiins = [
         str(r.get("EIIN", "")).strip()
         for r in normalized
-        if r.get("EIIN") and str(r.get("EIIN")).strip().lower() not in ["", "nan", "none", "-"]
+        if r.get("EIIN") and str(r.get("EIIN")).strip().lower() not in ["", "nan", "none", "-", "n/a"]
     ]
-    top_eiin = Counter(all_eiins).most_common(1)[0][0] if all_eiins else resolve_institution_eiin("", top_institute, "")
+    top_eiin = (
+        Counter(all_eiins).most_common(1)[0][0]
+        if all_eiins
+        else resolve_institution_eiin("", top_institute, top_board)
+    )
+    inst_details = resolve_institution_details(raw_eiin=top_eiin, institute=top_institute, board=top_board)
+    top_eiin = inst_details.get("eiin", "") or top_eiin
+    top_address = inst_details.get("address", "")
+
+    fail_subject_summary_matrix = build_fail_subject_summary_matrix(normalized)
 
     return {
         "total_students": total_students,
         "institute": top_institute,
         "eiin": top_eiin,
+        "address": top_address,
+        "board": top_board,
         "summary": {
             "institute": top_institute,
             "eiin": top_eiin,
+            "address": top_address,
+            "board": top_board,
             "total_students": total_students,
             "appeared": appeared,
             "passed": total_passed,
@@ -993,6 +1133,7 @@ def compute_result_analysis(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             "entries": flat_failed_entries
         },
         "subject_fail_tables": subject_fail_tables,
+        "fail_subject_summary_matrix": fail_subject_summary_matrix,
         "one_subject_fail": {
             "total": len(one_subject_fail_students),
             "subjects_summary": sorted_one_sub_freq,
@@ -1910,20 +2051,248 @@ def generate_analysis_excel_bytes(analysis: Dict[str, Any], meta: Optional[Dict[
 
         return r_idx + 2
 
+    # =========================================================================
+    # PART 1: FAIL SUBJECT SUMMARY MATRIX (AT FIRST)
+    # =========================================================================
+    matrix_data = analysis.get("fail_subject_summary_matrix") or build_fail_subject_summary_matrix([])
+    m_groups = matrix_data.get("groups", ["Science", "Business Studies", "Humanities"])
+    m_rows = matrix_data.get("rows", [])
+    m_subtotal_row = matrix_data.get("subtotal_row", {})
+    m_total_row = matrix_data.get("total_row", {})
+
+    matrix_total_cols = 1 + (len(m_groups) * 2) + 2 + 1  # 10 columns for 3 groups
+
+    # Row 2: Title Banner
+    c_m_title = ws_fail_tables.cell(row=2, column=1, value="FAIL SUBJECT SUMMARY ANALYSIS (GROUP & CANDIDATE TYPE BREAKDOWN - WITHOUT 4TH SUBJECT)")
+    c_m_title.font = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
+    c_m_title.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+    c_m_title.alignment = align_center
+    ws_fail_tables.merge_cells(start_row=2, start_column=1, end_row=2, end_column=matrix_total_cols)
+    ws_fail_tables.row_dimensions[2].height = 26
+    for ci in range(1, matrix_total_cols + 1):
+        ws_fail_tables.cell(row=2, column=ci).border = thin_border
+
+    # Row 3 & 4: Headers
+    c_fs = ws_fail_tables.cell(row=3, column=1, value="Fail Subject")
+    c_fs.font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    c_fs.fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    c_fs.alignment = align_center
+    ws_fail_tables.merge_cells(start_row=3, start_column=1, end_row=4, end_column=1)
+    ws_fail_tables.cell(row=3, column=1).border = thin_border
+    ws_fail_tables.cell(row=4, column=1).border = thin_border
+
+    col_cur = 2
+    for grp in m_groups:
+        c_g = ws_fail_tables.cell(row=3, column=col_cur, value=grp)
+        c_g.font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+        g_fill_hex = "1E3A8A" if "Sci" in grp else ("0369A1" if "Bus" in grp or "Com" in grp else ("0F766E" if "Hum" in grp or "Art" in grp else "334155"))
+        c_g.fill = PatternFill(start_color=g_fill_hex, end_color=g_fill_hex, fill_type="solid")
+        c_g.alignment = align_center
+        ws_fail_tables.merge_cells(start_row=3, start_column=col_cur, end_row=3, end_column=col_cur + 1)
+        ws_fail_tables.cell(row=3, column=col_cur).border = thin_border
+        ws_fail_tables.cell(row=3, column=col_cur + 1).border = thin_border
+
+        c_reg = ws_fail_tables.cell(row=4, column=col_cur, value="Regular")
+        c_reg.font = Font(name="Calibri", size=9, bold=True, color="1E3A8A")
+        c_reg.fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        c_reg.alignment = align_center
+        c_reg.border = thin_border
+
+        c_irreg = ws_fail_tables.cell(row=4, column=col_cur + 1, value="Irregular")
+        c_irreg.font = Font(name="Calibri", size=9, bold=True, color="D97706")
+        c_irreg.fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        c_irreg.alignment = align_center
+        c_irreg.border = thin_border
+        col_cur += 2
+
+    # SubTotal columns in Row 3-4
+    c_subtot = ws_fail_tables.cell(row=3, column=col_cur, value="SubTotal")
+    c_subtot.font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    c_subtot.fill = PatternFill(start_color="334155", end_color="334155", fill_type="solid")
+    c_subtot.alignment = align_center
+    ws_fail_tables.merge_cells(start_row=3, start_column=col_cur, end_row=3, end_column=col_cur + 1)
+    ws_fail_tables.cell(row=3, column=col_cur).border = thin_border
+    ws_fail_tables.cell(row=3, column=col_cur + 1).border = thin_border
+
+    c_st_reg = ws_fail_tables.cell(row=4, column=col_cur, value="Regular")
+    c_st_reg.font = Font(name="Calibri", size=9, bold=True, color="0F172A")
+    c_st_reg.fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+    c_st_reg.alignment = align_center
+    c_st_reg.border = thin_border
+
+    c_st_irreg = ws_fail_tables.cell(row=4, column=col_cur + 1, value="Irregular")
+    c_st_irreg.font = Font(name="Calibri", size=9, bold=True, color="0F172A")
+    c_st_irreg.fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+    c_st_irreg.alignment = align_center
+    c_st_irreg.border = thin_border
+    col_cur += 2
+
+    # Total column in Row 3-4 (merged)
+    c_tot_hdr = ws_fail_tables.cell(row=3, column=col_cur, value="Total")
+    c_tot_hdr.font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    c_tot_hdr.fill = PatternFill(start_color="991B1B", end_color="991B1B", fill_type="solid")
+    c_tot_hdr.alignment = align_center
+    ws_fail_tables.merge_cells(start_row=3, start_column=col_cur, end_row=4, end_column=col_cur)
+    ws_fail_tables.cell(row=3, column=col_cur).border = thin_border
+    ws_fail_tables.cell(row=4, column=col_cur).border = thin_border
+
+    # Data Rows (Row 5 to 9)
+    r_idx = 5
+    for row_item in m_rows:
+        ws_fail_tables.row_dimensions[r_idx].height = 20
+        c_lbl = ws_fail_tables.cell(row=r_idx, column=1, value=row_item.get("label", ""))
+        c_lbl.font = Font(name="Calibri", size=10, bold=True, color="1E293B")
+        c_lbl.alignment = align_left
+        c_lbl.border = thin_border
+
+        c_col = 2
+        for grp in m_groups:
+            grp_counts = row_item.get("counts", {}).get(grp, {"regular": 0, "irregular": 0, "total": 0})
+            cr = ws_fail_tables.cell(row=r_idx, column=c_col, value=grp_counts.get("regular", 0))
+            cr.font = Font(name="Calibri", size=10, color="2563EB")
+            cr.alignment = align_center
+            cr.border = thin_border
+
+            ci = ws_fail_tables.cell(row=r_idx, column=c_col + 1, value=grp_counts.get("irregular", 0))
+            ci.font = Font(name="Calibri", size=10, color="D97706")
+            ci.alignment = align_center
+            ci.border = thin_border
+            c_col += 2
+
+        subt = row_item.get("subtotal", {"regular": 0, "irregular": 0, "total": 0})
+        csr = ws_fail_tables.cell(row=r_idx, column=c_col, value=subt.get("regular", 0))
+        csr.font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+        csr.fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+        csr.alignment = align_center
+        csr.border = thin_border
+
+        csi = ws_fail_tables.cell(row=r_idx, column=c_col + 1, value=subt.get("irregular", 0))
+        csi.font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+        csi.fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+        csi.alignment = align_center
+        csi.border = thin_border
+        c_col += 2
+
+        ct = ws_fail_tables.cell(row=r_idx, column=c_col, value=row_item.get("total", 0))
+        ct.font = Font(name="Calibri", size=10, bold=True, color="DC2626")
+        ct.fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        ct.alignment = align_center
+        ct.border = thin_border
+        r_idx += 1
+
+    # Row 10: SubTotal Row
+    ws_fail_tables.row_dimensions[r_idx].height = 22
+    c_st_lbl = ws_fail_tables.cell(row=r_idx, column=1, value="SubTotal")
+    c_st_lbl.font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+    c_st_lbl.fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+    c_st_lbl.alignment = align_left
+    c_st_lbl.border = thin_border
+
+    c_col = 2
+    for grp in m_groups:
+        g_st = m_subtotal_row.get("counts", {}).get(grp, {"regular": 0, "irregular": 0, "total": 0})
+        cr = ws_fail_tables.cell(row=r_idx, column=c_col, value=g_st.get("regular", 0))
+        cr.font = Font(name="Calibri", size=10, bold=True, color="1E3A8A")
+        cr.fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        cr.alignment = align_center
+        cr.border = thin_border
+
+        ci = ws_fail_tables.cell(row=r_idx, column=c_col + 1, value=g_st.get("irregular", 0))
+        ci.font = Font(name="Calibri", size=10, bold=True, color="D97706")
+        ci.fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        ci.alignment = align_center
+        ci.border = thin_border
+        c_col += 2
+
+    st_all = m_subtotal_row.get("subtotal", {"regular": 0, "irregular": 0, "total": 0})
+    csr = ws_fail_tables.cell(row=r_idx, column=c_col, value=st_all.get("regular", 0))
+    csr.font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+    csr.fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+    csr.alignment = align_center
+    csr.border = thin_border
+
+    csi = ws_fail_tables.cell(row=r_idx, column=c_col + 1, value=st_all.get("irregular", 0))
+    csi.font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+    csi.fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+    csi.alignment = align_center
+    csi.border = thin_border
+    c_col += 2
+
+    c_st_tot = ws_fail_tables.cell(row=r_idx, column=c_col, value=m_subtotal_row.get("total", 0))
+    c_st_tot.font = Font(name="Calibri", size=11, bold=True, color="DC2626")
+    c_st_tot.fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    c_st_tot.alignment = align_center
+    c_st_tot.border = thin_border
+    r_idx += 1
+
+    # Row 11: Total Row (Merged across Regular + Irregular per group)
+    ws_fail_tables.row_dimensions[r_idx].height = 24
+    c_tot_lbl = ws_fail_tables.cell(row=r_idx, column=1, value="Total")
+    c_tot_lbl.font = Font(name="Calibri", size=11, bold=True, color="0F172A")
+    c_tot_lbl.fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+    c_tot_lbl.alignment = align_left
+    c_tot_lbl.border = thin_border
+
+    c_col = 2
+    for grp in m_groups:
+        grp_tot = m_total_row.get("counts", {}).get(grp, 0)
+        c_gt = ws_fail_tables.cell(row=r_idx, column=c_col, value=grp_tot)
+        c_gt.font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+        c_gt.fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+        c_gt.alignment = align_center
+        ws_fail_tables.merge_cells(start_row=r_idx, start_column=c_col, end_row=r_idx, end_column=c_col + 1)
+        ws_fail_tables.cell(row=r_idx, column=c_col).border = thin_border
+        ws_fail_tables.cell(row=r_idx, column=c_col + 1).border = thin_border
+        c_col += 2
+
+    # SubTotal total merged
+    c_st_merged = ws_fail_tables.cell(row=r_idx, column=c_col, value=m_total_row.get("subtotal", 0))
+    c_st_merged.font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+    c_st_merged.fill = PatternFill(start_color="CBD5E1", end_color="CBD5E1", fill_type="solid")
+    c_st_merged.alignment = align_center
+    ws_fail_tables.merge_cells(start_row=r_idx, start_column=c_col, end_row=r_idx, end_column=c_col + 1)
+    ws_fail_tables.cell(row=r_idx, column=c_col).border = thin_border
+    ws_fail_tables.cell(row=r_idx, column=c_col + 1).border = thin_border
+    c_col += 2
+
+    # Grand Total
+    c_grand_tot = ws_fail_tables.cell(row=r_idx, column=c_col, value=m_total_row.get("total", 0))
+    c_grand_tot.font = Font(name="Calibri", size=11, bold=True, color="DC2626")
+    c_grand_tot.fill = PatternFill(start_color="FECACA", end_color="FECACA", fill_type="solid")
+    c_grand_tot.alignment = align_center
+    c_grand_tot.border = thin_border
+    r_idx += 1
+
+    # Row 13: Section Header for Detailed Subject-Wise Tables
+    r_idx += 1
+    c_sec_hdr = ws_fail_tables.cell(row=r_idx, column=1, value="DETAILED SUBJECT-WISE FAILURE TABLES (WITHOUT 4TH SUBJECT)")
+    c_sec_hdr.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    c_sec_hdr.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+    c_sec_hdr.alignment = align_center
+    ws_fail_tables.merge_cells(start_row=r_idx, start_column=1, end_row=r_idx, end_column=14)
+    ws_fail_tables.row_dimensions[r_idx].height = 24
+    for ci in range(1, 15):
+        ws_fail_tables.cell(row=r_idx, column=ci).border = thin_border
+
+    start_detail_r = r_idx + 2
+
+    # =========================================================================
+    # PART 2: DETAILED SUBJECT-WISE TABLES (SIDE-BY-SIDE CATEGORIES)
+    # =========================================================================
     # Render Category 1: One Subject Fail (Cols A-D, start_col = 1)
-    curr_r_1 = 2
+    curr_r_1 = start_detail_r
     curr_r_1 = write_excel_fail_block(ws_fail_tables, 1, curr_r_1, "All", "One Subject Fail (Without 4th Subject)", one_table_all)
     for grp in all_groups_list:
         curr_r_1 = write_excel_fail_block(ws_fail_tables, 1, curr_r_1, f"Group: {grp}", "One Subject Fail (Without 4th Subject)", one_table_groups.get(grp, {}))
 
     # Render Category 2: Two Subject Fail (Cols F-I, start_col = 6)
-    curr_r_2 = 2
+    curr_r_2 = start_detail_r
     curr_r_2 = write_excel_fail_block(ws_fail_tables, 6, curr_r_2, "All", "Two Subject Fail (Without 4th Subject)", two_table_all)
     for grp in all_groups_list:
         curr_r_2 = write_excel_fail_block(ws_fail_tables, 6, curr_r_2, f"Group: {grp}", "Two Subject Fail (Without 4th Subject)", two_table_groups.get(grp, {}))
 
     # Render Category 3: Three or More Subject Fail (Cols K-N, start_col = 11)
-    curr_r_3 = 2
+    curr_r_3 = start_detail_r
     curr_r_3 = write_excel_fail_block(ws_fail_tables, 11, curr_r_3, "All", "Three or More Subject Fail (Without 4th Subject)", three_table_all)
     for grp in all_groups_list:
         curr_r_3 = write_excel_fail_block(ws_fail_tables, 11, curr_r_3, f"Group: {grp}", "Three or More Subject Fail (Without 4th Subject)", three_table_groups.get(grp, {}))
@@ -1933,10 +2302,8 @@ def generate_analysis_excel_bytes(analysis: Dict[str, Any], meta: Optional[Dict[
         vals = [str(cell.value or "") for cell in col if cell.value is not None]
         max_len = max((len(v) for v in vals), default=0)
         col_letter = get_column_letter(col[0].column)
-        if col[0].column in [5, 10]:
-            ws_fail_tables.column_dimensions[col_letter].width = 4
-        elif col[0].column in [2, 3, 4, 7, 8, 9, 12, 13, 14]:
-            ws_fail_tables.column_dimensions[col_letter].width = 12
+        if col[0].column in [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14]:
+            ws_fail_tables.column_dimensions[col_letter].width = max(max_len + 3, 12)
         else:
             ws_fail_tables.column_dimensions[col_letter].width = max(max_len + 3, 20)
 
@@ -2000,7 +2367,7 @@ def generate_demo_dataset(count: int = 50) -> List[Dict[str, Any]]:
                 "Name": name,
                 "Father Name": "MD. ABDUR RAHIM",
                 "Mother Name": "MRS. RAHIMA BEGUM",
-                "Institute": "CUMILLA GOVT. MODEL COLLEGE (105820)",
+                "Institute": "CUMILLA SHIKKHA BOARD GOVT. MODEL COLLEGE (132092)",
                 "Board": "Cumilla",
                 "Group": grp,
                 "Type": stype,
@@ -2020,8 +2387,12 @@ def generate_demo_dataset(count: int = 50) -> List[Dict[str, Any]]:
             target_fails = 1
         elif i in [7, 21, 39]:
             target_fails = 2
-        elif i in [14]:
+        elif i in [14, 31]:
             target_fails = 3
+        elif i in [28]:
+            target_fails = 4
+        elif i in [44]:
+            target_fails = 5
         else:
             target_fails = 0
 
@@ -2034,6 +2405,12 @@ def generate_demo_dataset(count: int = 50) -> List[Dict[str, Any]]:
                 subj_grades[full_name] = "F"
                 fail_count += 1
             elif target_fails > 2 and s_idx == 5:
+                subj_grades[full_name] = "F"
+                fail_count += 1
+            elif target_fails > 3 and s_idx == 1:
+                subj_grades[full_name] = "F"
+                fail_count += 1
+            elif target_fails > 4 and s_idx == 2:
                 subj_grades[full_name] = "F"
                 fail_count += 1
             else:
@@ -2069,7 +2446,7 @@ def generate_demo_dataset(count: int = 50) -> List[Dict[str, Any]]:
             "Name": name,
             "Father Name": "MD. ANWAR HOSSAIN",
             "Mother Name": "MRS. FARIDA YASMIN",
-            "Institute": "CUMILLA GOVT. MODEL COLLEGE (105820)",
+            "Institute": "CUMILLA SHIKKHA BOARD GOVT. MODEL COLLEGE (132092)",
             "Board": "Cumilla",
             "Group": grp,
             "Type": stype,

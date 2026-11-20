@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 
 from scraper import scrape_single_student, scrape_student_batch, get_v2_captcha
 from analysis import compute_result_analysis, generate_analysis_excel_bytes, generate_demo_dataset, resolve_institution_eiin
+from eiin_lookup import lookup_institution_by_eiin, resolve_institution_details
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("app")
@@ -95,6 +96,13 @@ async def board_result_page(request: Request):
 async def cumilla_result_page(request: Request):
     """Renders the dedicated Cumilla Education Board Result page."""
     return templates.TemplateResponse(request=request, name="cumilla_result.html", context={"page": "cumilla_result"})
+
+
+@app.get("/chattogram-result", response_class=HTMLResponse)
+@app.get("/ctg-result", response_class=HTMLResponse)
+async def chattogram_result_page(request: Request):
+    """Renders the dedicated Chattogram Education Board Result page."""
+    return templates.TemplateResponse(request=request, name="chattogram_result.html", context={"page": "chattogram_result"})
 
 
 @app.get("/result-analysis", response_class=HTMLResponse)
@@ -267,6 +275,19 @@ async def start_extraction(
     }
 
 
+@app.get("/api/lookup-institution")
+async def lookup_institution_endpoint(eiin: str = "", institute: str = "", board: str = ""):
+    """Dynamically resolves institution name, EIIN, and address from the local Bangladesh EIIN directory."""
+    clean_eiin = str(eiin or "").strip()
+    if clean_eiin and not institute.strip():
+        rec = lookup_institution_by_eiin(clean_eiin)
+        if rec:
+            return {"success": True, "found": True, **rec}
+        return {"success": True, "found": False, "eiin": clean_eiin, "name": "", "address": "", "board": board}
+    res = resolve_institution_details(raw_eiin=clean_eiin, institute=institute, board=board)
+    return {"success": True, "found": bool(res.get("eiin")), **res}
+
+
 @app.get("/api/captcha")
 async def get_captcha_endpoint():
     """Provides a fresh 4-digit security code / captcha image for general education boards."""
@@ -373,6 +394,7 @@ async def run_extraction_task(job_id: str):
                 "Father Name": r.get("Father Name", ""),
                 "Mother Name": r.get("Mother Name", ""),
                 "Institute": r.get("Institute", ""),
+                "EIIN": r.get("EIIN", ""),
                 "Board": r.get("Board"),
                 "Group": r.get("Group", ""),
                 "Type": r.get("Type", "REGULAR"),
@@ -402,10 +424,16 @@ async def run_extraction_task(job_id: str):
         job["analysis"] = analysis_data
         job["eiin"] = eiin
 
-        # Generate exported files (Excel & CSV) with EIIN included in filenames
+        # Clean institution name for filesystem-safe filename
+        inst_name = str(analysis_data.get("institute") or "Institution")
+        clean_inst = re.sub(r'[:*?"<>|/\\,]', ' ', inst_name).strip()
+        clean_inst = re.sub(r'\s+', ' ', clean_inst) or "Institution"
+
+        # Generate exported files (Excel & CSV) with EIIN and Institution included in filenames
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        excel_filename = f"Board_Results_EIIN_{eiin}_{exam}_{year}_{board}_{timestamp}.xlsx"
-        csv_filename = f"Board_Results_EIIN_{eiin}_{exam}_{year}_{board}_{timestamp}.csv"
+        eiin_prefix = f"{eiin}, " if eiin else ""
+        excel_filename = f"{eiin_prefix}{clean_inst} Board Results_{exam}_{year}_{board}_{timestamp}.xlsx"
+        csv_filename = f"{eiin_prefix}{clean_inst} Board Results_{exam}_{year}_{board}_{timestamp}.csv"
 
         excel_filepath = os.path.join(EXPORTS_DIR, f"{job_id}_{excel_filename}")
         csv_filepath = os.path.join(EXPORTS_DIR, f"{job_id}_{csv_filename}")
@@ -425,8 +453,7 @@ async def run_extraction_task(job_id: str):
                 worksheet.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 40)
 
         # Generate analysis Excel workbook
-        inst_name = str(analysis_data.get("institute") or "Institution").replace(":", " ").replace("/", " ").replace("\\", " ").strip()
-        analysis_filename = f"{eiin}, {inst_name} Board Result Comprehensive Analysis Report_{exam}_{year}_{board}_{timestamp}.xlsx"
+        analysis_filename = f"{eiin_prefix}{clean_inst} Board Result Comprehensive Analysis Report_{exam}_{year}_{board}_{timestamp}.xlsx"
         analysis_filepath = os.path.join(EXPORTS_DIR, f"{job_id}_{analysis_filename}")
 
         meta = {"exam": exam, "year": year, "board": board, "eiin": eiin}
@@ -451,6 +478,9 @@ async def run_extraction_task(job_id: str):
             "download_xlsx": f"/api/download/{job_id}/xlsx",
             "download_csv": f"/api/download/{job_id}/csv",
             "download_analysis_xlsx": f"/api/download-analysis/{job_id}",
+            "excel_filename": excel_filename,
+            "csv_filename": csv_filename,
+            "analysis_excel_filename": analysis_filename,
             "analysis": analysis_data
         })
 
@@ -556,7 +586,7 @@ async def get_job_analysis(job_id: str):
 
 
 @app.get("/api/download-analysis/{job_id}")
-async def download_analysis_file(job_id: str):
+async def download_analysis_file(job_id: str, eiin: str = ""):
     """
     Downloads the comprehensive Analysis Excel workbook (.xlsx).
     """
@@ -564,21 +594,29 @@ async def download_analysis_file(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job ID not found.")
 
+    override_eiin = str(eiin or "").strip()
     files = job.get("files", {})
     path = files.get("analysis_excel_path")
     filename = files.get("analysis_excel_filename")
 
-    if not path or not os.path.exists(path):
+    if override_eiin or not path or not os.path.exists(path):
         results = job.get("results", [])
         if not results:
             raise HTTPException(status_code=404, detail="No student records available for analysis.")
         analysis_data = job.get("analysis") or compute_result_analysis(results)
-        eiin = job.get("eiin") or analysis_data.get("eiin") or resolve_institution_eiin("", analysis_data.get("institute", ""), job.get("board", ""))
-        meta = {"exam": job.get("exam", ""), "year": job.get("year", ""), "board": job.get("board", ""), "eiin": eiin}
+        resolved_eiin = override_eiin or job.get("eiin") or analysis_data.get("eiin") or resolve_institution_eiin("", analysis_data.get("institute", ""), job.get("board", ""))
+        meta = {"exam": job.get("exam", ""), "year": job.get("year", ""), "board": job.get("board", ""), "eiin": resolved_eiin}
         analysis_stream = generate_analysis_excel_bytes(analysis_data, meta)
         inst_name = str(analysis_data.get("institute") or "Institution").replace(":", " ").replace("/", " ").replace("\\", " ").strip()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{eiin}, {inst_name} Board Result Comprehensive Analysis Report_{timestamp}.xlsx"
+        eiin_prefix = f"{resolved_eiin}, " if resolved_eiin else ""
+        filename = f"{eiin_prefix}{inst_name} Board Result Comprehensive Analysis Report_{timestamp}.xlsx"
+        if override_eiin:
+            return StreamingResponse(
+                analysis_stream,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
         path = os.path.join(EXPORTS_DIR, f"{job_id}_{filename}")
         with open(path, "wb") as f_out:
             f_out.write(analysis_stream.getvalue())
@@ -624,7 +662,7 @@ async def analyze_uploaded_file(file: UploadFile = File(...)):
 
 
 @app.post("/api/export-analysis-file")
-async def export_analysis_from_uploaded_file(file: UploadFile = File(...)):
+async def export_analysis_from_uploaded_file(file: UploadFile = File(...), eiin: str = Form("")):
     """
     Accepts an uploaded CSV/Excel results file and directly streams
     the comprehensive Analysis Excel workbook.
@@ -646,13 +684,21 @@ async def export_analysis_from_uploaded_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="The uploaded file contains no student rows.")
 
     analysis_data = compute_result_analysis(records)
-    eiin = analysis_data.get("eiin") or resolve_institution_eiin("", analysis_data.get("institute", ""))
-    meta = {"exam": "Board Result", "year": "", "board": "All", "eiin": eiin}
+    resolved_eiin = str(eiin or "").strip() or analysis_data.get("eiin") or resolve_institution_eiin("", analysis_data.get("institute", ""), analysis_data.get("board", ""))
+    meta = {
+        "exam": "Board Result",
+        "year": "",
+        "board": analysis_data.get("board") or "All",
+        "eiin": resolved_eiin
+    }
     excel_stream = generate_analysis_excel_bytes(analysis_data, meta)
 
-    inst_name = str(analysis_data.get("institute") or "Institution").replace(":", " ").replace("/", " ").replace("\\", " ").strip()
+    inst_name = str(analysis_data.get("institute") or "Institution")
+    clean_inst = re.sub(r'[:*?"<>|/\\,]', ' ', inst_name).strip()
+    clean_inst = re.sub(r'\s+', ' ', clean_inst) or "Institution"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    export_name = f"{eiin}, {inst_name} Board Result Comprehensive Analysis Report_{timestamp}.xlsx"
+    eiin_prefix = f"{resolved_eiin}, " if resolved_eiin else ""
+    export_name = f"{eiin_prefix}{clean_inst} Board Result Comprehensive Analysis Report_{timestamp}.xlsx"
     return StreamingResponse(
         excel_stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
