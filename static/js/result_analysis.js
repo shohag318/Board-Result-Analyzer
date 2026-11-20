@@ -3597,6 +3597,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             return;
         }
 
+        const watermarkUri = (typeof window !== "undefined" && window.BRA_WATERMARK_DATA_URI)
+            ? window.BRA_WATERMARK_DATA_URI
+            : "/static/images/watermark.png";
+
         const summary = analysisData.summary || {};
         const reg = analysisData.regular_summary || {};
         const irreg = analysisData.irregular_summary || {};
@@ -3771,6 +3775,41 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
                 * {
                     box-sizing: border-box;
+                }
+                /* Document Watermark on every printed page */
+                .pdf-watermark {
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 440px;
+                    height: 440px;
+                    background-image: url("${watermarkUri}");
+                    background-repeat: no-repeat;
+                    background-position: center;
+                    background-size: contain;
+                    opacity: 0.08;
+                    pointer-events: none;
+                    z-index: 99999;
+                }
+                @media print {
+                    .pdf-watermark {
+                        position: fixed !important;
+                        top: 50% !important;
+                        left: 50% !important;
+                        transform: translate(-50%, -50%) !important;
+                        width: 440px !important;
+                        height: 440px !important;
+                        background-image: url("${watermarkUri}") !important;
+                        background-repeat: no-repeat !important;
+                        background-position: center !important;
+                        background-size: contain !important;
+                        opacity: 0.08 !important;
+                        pointer-events: none !important;
+                        z-index: 99999 !important;
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
                 }
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -4517,6 +4556,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             </style>
         </head>
         <body>
+            <div class="pdf-watermark" aria-hidden="true"></div>
             <!-- Interactive Top Action Toolbar (Hidden on paper) -->
             <div class="no-print d-flex justify-content-between align-items-center mb-4 p-3 bg-white rounded-3 shadow-sm border border-slate-200">
                 <div class="d-flex align-items-center gap-2">
@@ -5561,6 +5601,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             return;
         }
 
+        const watermarkUri = (typeof window !== "undefined" && window.BRA_WATERMARK_DATA_URI)
+            ? window.BRA_WATERMARK_DATA_URI
+            : "/static/images/watermark.png";
+
         const cleanBoard = (metaInfo && metaInfo.board ? metaInfo.board : "Board").replace(/\s*\(Fast Server\)/i, "").trim();
         const examLabel = [metaInfo && metaInfo.exam ? metaInfo.exam : "Analyzed File", metaInfo && metaInfo.year ? metaInfo.year : ""].filter(Boolean).join(" ").trim();
         const cleanInstName = (instDetails.instituteName || "Institution").replace(/[:*?"<>|\/\\]/g, "").replace(/\s+/g, " ").trim();
@@ -5584,6 +5628,41 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
                 * {
                     box-sizing: border-box;
+                }
+                /* Document Watermark on every printed page */
+                .pdf-watermark {
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 440px;
+                    height: 440px;
+                    background-image: url("${watermarkUri}");
+                    background-repeat: no-repeat;
+                    background-position: center;
+                    background-size: contain;
+                    opacity: 0.08;
+                    pointer-events: none;
+                    z-index: 99999;
+                }
+                @media print {
+                    .pdf-watermark {
+                        position: fixed !important;
+                        top: 50% !important;
+                        left: 50% !important;
+                        transform: translate(-50%, -50%) !important;
+                        width: 440px !important;
+                        height: 440px !important;
+                        background-image: url("${watermarkUri}") !important;
+                        background-repeat: no-repeat !important;
+                        background-position: center !important;
+                        background-size: contain !important;
+                        opacity: 0.08 !important;
+                        pointer-events: none !important;
+                        z-index: 99999 !important;
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
                 }
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -5812,6 +5891,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             </style>
         </head>
         <body>
+            <div class="pdf-watermark" aria-hidden="true"></div>
             <div class="report-container">
                 <!-- Action Toolbar (Hidden in print) -->
                 <div class="no-print d-flex justify-content-between align-items-center p-3 mb-3 bg-white border border-slate-200 rounded-3 shadow-sm">

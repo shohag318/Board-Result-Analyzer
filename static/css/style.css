@@ -505,6 +505,31 @@ body {
     cursor: pointer;
 }
 
+/* Print & Marksheet Watermark Styling */
+.marksheet-wrapper {
+    position: relative;
+    overflow: hidden;
+}
+.marksheet-watermark {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 330px;
+    height: 330px;
+    background-image: url("/static/images/watermark.png");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    opacity: 0.06;
+    pointer-events: none;
+    z-index: 1;
+}
+.marksheet-wrapper > * {
+    position: relative;
+    z-index: 2;
+}
+
 /* Print Styling for Marksheet */
 @media print {
     @page {
@@ -530,10 +555,30 @@ body {
         border: 1.5px solid #cbd5e1 !important;
         box-shadow: none !important;
         border-radius: 8px !important;
+        position: relative !important;
     }
     .marksheet-wrapper {
         border: none !important;
         padding: 10px !important;
+        position: relative !important;
+    }
+    .marksheet-watermark {
+        display: block !important;
+        position: absolute !important;
+        top: 50% !important;
+        left: 50% !important;
+        transform: translate(-50%, -50%) !important;
+        width: 350px !important;
+        height: 350px !important;
+        background-image: url("/static/images/watermark.png") !important;
+        background-repeat: no-repeat !important;
+        background-position: center !important;
+        background-size: contain !important;
+        opacity: 0.08 !important;
+        pointer-events: none !important;
+        z-index: 10 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
     }
     .card-header {
         background-color: #1e3a5f !important;
